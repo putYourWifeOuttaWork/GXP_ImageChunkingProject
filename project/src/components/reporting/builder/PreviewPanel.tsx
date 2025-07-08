@@ -1,0 +1,325 @@
+import React from 'react';
+import { Eye, RefreshCw, Download, Share, AlertCircle, CheckCircle } from 'lucide-react';
+import Button from '../../common/Button';
+import { AggregatedData } from '../../../types/reporting';
+
+interface PreviewPanelProps {
+  previewData: AggregatedData | null;
+  isLoading: boolean;
+  onGeneratePreview: () => void;
+  reportConfig: any;
+}
+
+export const PreviewPanel: React.FC<PreviewPanelProps> = ({
+  previewData,
+  isLoading,
+  onGeneratePreview,
+  reportConfig,
+}) => {
+  const hasValidConfig = () => {
+    return (
+      reportConfig.name &&
+      reportConfig.dataSources.length > 0 &&
+      reportConfig.measures.length > 0 &&
+      reportConfig.chartType
+    );
+  };
+
+  const renderConfigSummary = () => {
+    return (
+      <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 mb-6">
+        <h4 className="text-sm font-medium text-gray-900 mb-3">Report Configuration</h4>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <p className="text-sm text-gray-600 mb-1">
+              <strong>Name:</strong> {reportConfig.name || 'Untitled Report'}
+            </p>
+            <p className="text-sm text-gray-600 mb-1">
+              <strong>Type:</strong> {reportConfig.type || 'Chart'}
+            </p>
+            <p className="text-sm text-gray-600 mb-1">
+              <strong>Category:</strong> {reportConfig.category || 'Analytics'}
+            </p>
+            <p className="text-sm text-gray-600">
+              <strong>Chart Type:</strong> {reportConfig.chartType || 'None'}
+            </p>
+          </div>
+          <div>
+            <p className="text-sm text-gray-600 mb-1">
+              <strong>Data Sources:</strong> {reportConfig.dataSources.length}
+            </p>
+            <p className="text-sm text-gray-600 mb-1">
+              <strong>Dimensions:</strong> {reportConfig.dimensions.length}
+            </p>
+            <p className="text-sm text-gray-600 mb-1">
+              <strong>Measures:</strong> {reportConfig.measures.length}
+            </p>
+            <p className="text-sm text-gray-600">
+              <strong>Filters:</strong> {reportConfig.filters.length}
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderPreviewPlaceholder = () => {
+    return (
+      <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
+        <div className="mx-auto w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-4">
+          <Eye size={32} className="text-gray-400" />
+        </div>
+        <h3 className="text-lg font-medium text-gray-900 mb-2">Preview Your Report</h3>
+        <p className="text-sm text-gray-600 mb-4">
+          {hasValidConfig() 
+            ? 'Click the button below to generate a preview of your report'
+            : 'Complete the report configuration to enable preview'
+          }
+        </p>
+        <Button
+          variant="primary"
+          icon={<RefreshCw size={16} />}
+          onClick={onGeneratePreview}
+          disabled={!hasValidConfig() || isLoading}
+          loading={isLoading}
+        >
+          Generate Preview
+        </Button>
+      </div>
+    );
+  };
+
+  const renderPreviewContent = () => {
+    if (!previewData) return null;
+
+    return (
+      <div className="space-y-6">
+        {/* Preview Stats */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <div className="flex items-center">
+              <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center mr-3">
+                <CheckCircle size={16} className="text-white" />
+              </div>
+              <div>
+                <p className="text-sm text-blue-600">Total Records</p>
+                <p className="text-lg font-semibold text-blue-900">{previewData.totalCount}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+            <div className="flex items-center">
+              <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center mr-3">
+                <CheckCircle size={16} className="text-white" />
+              </div>
+              <div>
+                <p className="text-sm text-green-600">Filtered Records</p>
+                <p className="text-lg font-semibold text-green-900">{previewData.filteredCount}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
+            <div className="flex items-center">
+              <div className="w-8 h-8 bg-purple-500 rounded-full flex items-center justify-center mr-3">
+                <RefreshCw size={16} className="text-white" />
+              </div>
+              <div>
+                <p className="text-sm text-purple-600">Execution Time</p>
+                <p className="text-lg font-semibold text-purple-900">{previewData.executionTime}ms</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+            <div className="flex items-center">
+              <div className="w-8 h-8 bg-yellow-500 rounded-full flex items-center justify-center mr-3">
+                <Eye size={16} className="text-white" />
+              </div>
+              <div>
+                <p className="text-sm text-yellow-600">Data Points</p>
+                <p className="text-lg font-semibold text-yellow-900">{previewData.data.length}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Chart Preview Area */}
+        <div className="bg-white border border-gray-200 rounded-lg p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h4 className="text-lg font-medium text-gray-900">Chart Preview</h4>
+            <div className="flex space-x-2">
+              <Button
+                variant="outline"
+                size="sm"
+                icon={<RefreshCw size={16} />}
+                onClick={onGeneratePreview}
+                disabled={isLoading}
+              >
+                Refresh
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                icon={<Download size={16} />}
+                disabled={!previewData}
+              >
+                Export
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                icon={<Share size={16} />}
+                disabled={!previewData}
+              >
+                Share
+              </Button>
+            </div>
+          </div>
+
+          {/* Chart placeholder - In a real implementation, this would render the D3 chart */}
+          <div 
+            className="border border-gray-200 rounded-lg bg-gray-50 flex items-center justify-center"
+            style={{ 
+              width: reportConfig.visualizationSettings.dimensions.width,
+              height: reportConfig.visualizationSettings.dimensions.height,
+              maxWidth: '100%',
+              maxHeight: '500px'
+            }}
+          >
+            <div className="text-center">
+              <div className="w-16 h-16 bg-gray-200 rounded-full flex items-center justify-center mb-4 mx-auto">
+                <BarChart size={32} className="text-gray-400" />
+              </div>
+              <p className="text-sm text-gray-600 mb-2">
+                {reportConfig.chartType.replace('_', ' ').toUpperCase()} Chart
+              </p>
+              <p className="text-xs text-gray-500">
+                {reportConfig.visualizationSettings.dimensions.width} × {reportConfig.visualizationSettings.dimensions.height}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Data Sample */}
+        <div className="bg-white border border-gray-200 rounded-lg p-6">
+          <h4 className="text-lg font-medium text-gray-900 mb-4">Data Sample</h4>
+          {previewData.data.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    {reportConfig.dimensions.map((dim: any) => (
+                      <th
+                        key={dim.id}
+                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                      >
+                        {dim.displayName || dim.name}
+                      </th>
+                    ))}
+                    {reportConfig.measures.map((measure: any) => (
+                      <th
+                        key={measure.id}
+                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                      >
+                        {measure.displayName || measure.name}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {previewData.data.slice(0, 10).map((row, index) => (
+                    <tr key={index} className={index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                      {reportConfig.dimensions.map((dim: any) => (
+                        <td key={dim.id} className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          {row.dimensions[dim.field] || '-'}
+                        </td>
+                      ))}
+                      {reportConfig.measures.map((measure: any) => (
+                        <td key={measure.id} className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          {row.measures[measure.field] || '-'}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="text-center py-8">
+              <AlertCircle size={48} className="text-gray-300 mx-auto mb-4" />
+              <p className="text-sm text-gray-600">No data available for preview</p>
+            </div>
+          )}
+        </div>
+
+        {/* Metadata */}
+        <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+          <h4 className="text-sm font-medium text-gray-900 mb-3">Query Information</h4>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <p className="text-sm text-gray-600">
+                <strong>Cache Hit:</strong> {previewData.cacheHit ? 'Yes' : 'No'}
+              </p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-600">
+                <strong>Last Updated:</strong> {previewData.metadata.lastUpdated}
+              </p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-600">
+                <strong>Dimensions:</strong> {previewData.metadata.dimensions.length}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h3 className="text-lg font-medium text-gray-900 mb-4">Preview & Test</h3>
+        <p className="text-sm text-gray-600 mb-6">
+          Review your report configuration and preview the results. Make sure everything looks correct before saving.
+        </p>
+      </div>
+
+      {renderConfigSummary()}
+
+      {isLoading ? (
+        <div className="flex items-center justify-center h-64">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
+            <p className="text-sm text-gray-600">Generating preview...</p>
+          </div>
+        </div>
+      ) : previewData ? (
+        renderPreviewContent()
+      ) : (
+        renderPreviewPlaceholder()
+      )}
+
+      {/* Validation Messages */}
+      {!hasValidConfig() && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+          <div className="flex items-start">
+            <AlertCircle size={20} className="text-yellow-600 mr-3 mt-0.5" />
+            <div>
+              <h4 className="text-sm font-medium text-yellow-900 mb-1">Configuration Incomplete</h4>
+              <ul className="text-sm text-yellow-800 space-y-1">
+                {!reportConfig.name && <li>• Report name is required</li>}
+                {reportConfig.dataSources.length === 0 && <li>• At least one data source is required</li>}
+                {reportConfig.measures.length === 0 && <li>• At least one measure is required</li>}
+                {!reportConfig.chartType && <li>• Chart type selection is required</li>}
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
