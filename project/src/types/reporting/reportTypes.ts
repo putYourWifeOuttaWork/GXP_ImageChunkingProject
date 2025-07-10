@@ -102,9 +102,13 @@ export interface Dimension {
   id: string;
   name: string;
   field: string;
-  dataSource: string;
+  dataSource?: string;
+  source?: string; // Alternative property name used in some places
   dataType: DataType;
   format?: string;
+  
+  // Enum support for categorical dimensions
+  enumValues?: string[];
   
   // Hierarchy and grouping
   hierarchyLevel?: number;
@@ -115,6 +119,9 @@ export interface Dimension {
   displayName?: string;
   description?: string;
   isHidden?: boolean;
+  
+  // Time dimensions
+  granularity?: 'day' | 'week' | 'month' | 'quarter' | 'year';
   
   // Sorting
   sortOrder?: number;

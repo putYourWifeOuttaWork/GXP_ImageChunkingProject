@@ -36,19 +36,15 @@ export const useReports = (filters?: {
     queryKey: reportQueryKeys.list(filters),
     queryFn: async (): Promise<ReportSummary[]> => {
       let query = supabase
-        .from('reports')
+        .from('custom_reports')
         .select(`
           report_id,
           name,
           description,
-          category,
-          report_type,
-          visualization_config,
-          is_public,
-          is_template,
           created_by_user_id,
-          tags,
-          view_count,
+          company_id,
+          program_id,
+          configuration,
           created_at,
           updated_at
         `)
@@ -113,7 +109,7 @@ export const useReport = (reportId: string) => {
     queryKey: reportQueryKeys.detail(reportId),
     queryFn: async (): Promise<ReportConfiguration> => {
       const { data, error } = await supabase
-        .from('reports')
+        .from('custom_reports')
         .select('*')
         .eq('report_id', reportId)
         .single();
@@ -169,7 +165,7 @@ export const useReportData = (
     queryFn: async (): Promise<AggregatedData> => {
       // First, get the report configuration
       const { data: reportConfig, error: configError } = await supabase
-        .from('reports')
+        .from('custom_reports')
         .select('*')
         .eq('report_id', reportId)
         .single();
@@ -234,29 +230,30 @@ export const useCreateReport = () => {
   return useMutation({
     mutationFn: async (report: Omit<ReportConfiguration, 'id' | 'version' | 'viewCount' | 'createdAt' | 'updatedAt'>) => {
       const { data, error } = await supabase
-        .from('reports')
+        .from('custom_reports')
         .insert({
           name: report.name,
           description: report.description,
-          category: report.category,
-          report_type: report.type,
           created_by_user_id: report.createdByUserId,
           company_id: report.companyId,
-          program_ids: report.programIds,
-          is_public: report.isPublic,
-          is_template: report.isTemplate,
-          data_sources: report.dataSources,
-          dimensions: report.dimensions,
-          measures: report.measures,
-          filters: report.filters,
-          visualization_config: {
+          program_id: report.programIds?.[0] || null, // Use first program ID if available
+          configuration: {
+            category: report.category,
+            type: report.type,
+            programIds: report.programIds,
+            isPublic: report.isPublic,
+            isTemplate: report.isTemplate,
+            dataSources: report.dataSources,
+            dimensions: report.dimensions,
+            measures: report.measures,
+            filters: report.filters,
             chartType: report.chartType,
-            ...report.visualizationSettings,
+            visualizationSettings: report.visualizationSettings,
+            queryCacheTtl: report.queryCacheTtl,
+            autoRefresh: report.autoRefresh,
+            refreshFrequency: report.refreshFrequency,
+            tags: report.tags,
           },
-          query_cache_ttl: `${report.queryCacheTtl} seconds`,
-          auto_refresh: report.autoRefresh,
-          refresh_frequency: report.refreshFrequency ? `${report.refreshFrequency} seconds` : null,
-          tags: report.tags,
         })
         .select()
         .single();
@@ -282,32 +279,47 @@ export const useUpdateReport = () => {
       reportId: string; 
       updates: Partial<ReportConfiguration> 
     }) => {
+      // First get the current report to merge configuration
+      const { data: currentReport, error: fetchError } = await supabase
+        .from('custom_reports')
+        .select('configuration')
+        .eq('report_id', reportId)
+        .single();
+
+      if (fetchError) throw fetchError;
+
+      const currentConfig = currentReport?.configuration || {};
+      
       const updateData: any = {};
 
       if (updates.name) updateData.name = updates.name;
       if (updates.description !== undefined) updateData.description = updates.description;
-      if (updates.category) updateData.category = updates.category;
-      if (updates.type) updateData.report_type = updates.type;
-      if (updates.isPublic !== undefined) updateData.is_public = updates.isPublic;
-      if (updates.isTemplate !== undefined) updateData.is_template = updates.isTemplate;
-      if (updates.programIds) updateData.program_ids = updates.programIds;
-      if (updates.dataSources) updateData.data_sources = updates.dataSources;
-      if (updates.dimensions) updateData.dimensions = updates.dimensions;
-      if (updates.measures) updateData.measures = updates.measures;
-      if (updates.filters) updateData.filters = updates.filters;
-      if (updates.visualizationSettings || updates.chartType) {
-        updateData.visualization_config = {
-          chartType: updates.chartType,
-          ...updates.visualizationSettings,
-        };
+      if (updates.programIds) updateData.program_id = updates.programIds?.[0] || null;
+
+      // Merge configuration updates
+      const configUpdates: any = {};
+      if (updates.category) configUpdates.category = updates.category;
+      if (updates.type) configUpdates.type = updates.type;
+      if (updates.isPublic !== undefined) configUpdates.isPublic = updates.isPublic;
+      if (updates.isTemplate !== undefined) configUpdates.isTemplate = updates.isTemplate;
+      if (updates.programIds) configUpdates.programIds = updates.programIds;
+      if (updates.dataSources) configUpdates.dataSources = updates.dataSources;
+      if (updates.dimensions) configUpdates.dimensions = updates.dimensions;
+      if (updates.measures) configUpdates.measures = updates.measures;
+      if (updates.filters) configUpdates.filters = updates.filters;
+      if (updates.chartType) configUpdates.chartType = updates.chartType;
+      if (updates.visualizationSettings) configUpdates.visualizationSettings = updates.visualizationSettings;
+      if (updates.queryCacheTtl) configUpdates.queryCacheTtl = updates.queryCacheTtl;
+      if (updates.autoRefresh !== undefined) configUpdates.autoRefresh = updates.autoRefresh;
+      if (updates.refreshFrequency) configUpdates.refreshFrequency = updates.refreshFrequency;
+      if (updates.tags) configUpdates.tags = updates.tags;
+
+      if (Object.keys(configUpdates).length > 0) {
+        updateData.configuration = { ...currentConfig, ...configUpdates };
       }
-      if (updates.queryCacheTtl) updateData.query_cache_ttl = `${updates.queryCacheTtl} seconds`;
-      if (updates.autoRefresh !== undefined) updateData.auto_refresh = updates.autoRefresh;
-      if (updates.refreshFrequency) updateData.refresh_frequency = `${updates.refreshFrequency} seconds`;
-      if (updates.tags) updateData.tags = updates.tags;
 
       const { data, error } = await supabase
-        .from('reports')
+        .from('custom_reports')
         .update(updateData)
         .eq('report_id', reportId)
         .select()
@@ -332,7 +344,7 @@ export const useDeleteReport = () => {
   return useMutation({
     mutationFn: async (reportId: string) => {
       const { error } = await supabase
-        .from('reports')
+        .from('custom_reports')
         .delete()
         .eq('report_id', reportId);
 
@@ -361,7 +373,7 @@ export const useCloneReport = () => {
     }) => {
       // First get the original report
       const { data: originalReport, error: fetchError } = await supabase
-        .from('reports')
+        .from('custom_reports')
         .select('*')
         .eq('report_id', reportId)
         .single();
@@ -370,7 +382,7 @@ export const useCloneReport = () => {
 
       // Create the clone
       const { data, error } = await supabase
-        .from('reports')
+        .from('custom_reports')
         .insert({
           name: newName,
           description: newDescription || `Clone of ${originalReport.name}`,

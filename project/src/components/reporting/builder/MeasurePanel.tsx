@@ -1,22 +1,26 @@
 import React, { useState } from 'react';
-import { Plus, BarChart, TrendingUp, Calculator, Hash, Percent } from 'lucide-react';
+import { Plus, BarChart, TrendingUp, Calculator, Hash, Percent, Trash2 } from 'lucide-react';
 import Button from '../../common/Button';
 import { Measure, DataSource } from '../../../types/reporting';
 
 interface MeasurePanelProps {
   measures: Measure[];
   onAddMeasure: (measure: Measure) => void;
+  onRemoveMeasure: (id: string) => void;
   selectedMeasures: string[];
   onSelectionChange: (selectedIds: string[]) => void;
   dataSources: DataSource[];
+  availableMeasures: Measure[];
 }
 
 export const MeasurePanel: React.FC<MeasurePanelProps> = ({
   measures,
   onAddMeasure,
+  onRemoveMeasure,
   selectedMeasures,
   onSelectionChange,
   dataSources,
+  availableMeasures,
 }) => {
   const [showAddForm, setShowAddForm] = useState(false);
   const [newMeasure, setNewMeasure] = useState({
@@ -29,7 +33,7 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
   });
 
   // Available measure fields based on agricultural data model
-  const availableMeasures = [
+  const measureDefinitions = [
     // Petri observation measures
     { 
       table: 'petri_observations', 
@@ -328,6 +332,13 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
     });
   };
 
+  const handleRemoveMeasure = (measureId: string, measureName: string) => {
+    const confirmed = window.confirm(`Are you sure you want to remove measure "${measureName}"?`);
+    if (confirmed) {
+      onRemoveMeasure(measureId);
+    }
+  };
+
   const getIconForAggregation = (aggregation: string) => {
     switch (aggregation) {
       case 'sum':
@@ -344,7 +355,7 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
     }
   };
 
-  const groupedMeasures = availableMeasures.reduce((acc, measure) => {
+  const groupedMeasures = measureDefinitions.reduce((acc, measure) => {
     if (!acc[measure.table]) {
       acc[measure.table] = [];
     }
@@ -379,13 +390,22 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
                       <p className="text-sm text-gray-600">{measure.aggregation}({measure.field})</p>
                     </div>
                   </div>
-                  <div className="flex space-x-2">
+                  <div className="flex items-center space-x-2">
                     <span className="text-xs text-gray-500 bg-gray-200 px-2 py-1 rounded">
                       {measure.aggregation}
                     </span>
                     <span className="text-xs text-gray-500 bg-gray-200 px-2 py-1 rounded">
                       {measure.dataType}
                     </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      icon={<Trash2 size={16} />}
+                      onClick={() => handleRemoveMeasure(measure.id, measure.displayName || measure.name)}
+                      className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                    >
+                      Remove
+                    </Button>
                   </div>
                 </div>
               </div>

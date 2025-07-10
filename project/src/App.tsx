@@ -33,6 +33,7 @@ const UserProfilePage = lazy(() => import('./pages/UserProfilePage'));
 const AuditLogPage = lazy(() => import('./pages/AuditLogPage'));
 const CompanyManagementPage = lazy(() => import('./pages/CompanyManagementPage'));
 const UserAuditPage = lazy(() => import('./pages/UserAuditPage'));
+const ReportBuilderPage = lazy(() => import('./pages/ReportBuilderPage'));
 
 function App() {
   const navigate = useNavigate();
@@ -382,6 +383,16 @@ function App() {
               <Route path="/company" element={
                 <Suspense fallback={<LoadingScreen />}>
                   <CompanyManagementPage />
+                </Suspense>
+              } />
+              <Route path="/reports" element={
+                <Suspense fallback={<LoadingScreen />}>
+                  <ReportBuilderPage />
+                </Suspense>
+              } />
+              <Route path="/reports/new" element={
+                <Suspense fallback={<LoadingScreen />}>
+                  <ReportBuilderPage />
                 </Suspense>
               } />
             </Route>

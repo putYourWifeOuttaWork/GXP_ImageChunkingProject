@@ -172,6 +172,10 @@ export interface InteractionConfiguration {
     enabled: boolean;
     action: 'select' | 'filter' | 'drill-down' | 'custom';
   };
+  dataFilters: {
+    hideNullValues: boolean;
+    hideZeroValues: boolean;
+  };
 }
 
 // Chart-specific configuration types

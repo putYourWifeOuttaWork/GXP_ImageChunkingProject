@@ -1,7 +1,11 @@
 import React from 'react';
-import { Eye, RefreshCw, Download, Share, AlertCircle, CheckCircle } from 'lucide-react';
+import { Eye, RefreshCw, Download, Share, AlertCircle, CheckCircle, BarChart } from 'lucide-react';
 import Button from '../../common/Button';
 import { AggregatedData } from '../../../types/reporting';
+import { BarChart as D3BarChart } from '../visualizations/charts/BarChart';
+import { LineChart as D3LineChart } from '../visualizations/charts/LineChart';
+import { PieChart as D3PieChart } from '../visualizations/charts/PieChart';
+import { GrowthProgressionChart } from '../visualizations/scientific/GrowthProgressionChart';
 
 interface PreviewPanelProps {
   previewData: AggregatedData | null;
@@ -87,6 +91,53 @@ export const PreviewPanel: React.FC<PreviewPanelProps> = ({
         </Button>
       </div>
     );
+  };
+
+  const renderChart = () => {
+    if (!previewData) {
+      return (
+        <div 
+          className="border border-gray-200 rounded-lg bg-gray-50 flex items-center justify-center"
+          style={{ 
+            width: reportConfig.visualizationSettings.dimensions.width,
+            height: reportConfig.visualizationSettings.dimensions.height,
+            maxWidth: '100%',
+            maxHeight: '500px'
+          }}
+        >
+          <div className="text-center">
+            <div className="w-16 h-16 bg-gray-200 rounded-full flex items-center justify-center mb-4 mx-auto">
+              <BarChart size={32} className="text-gray-400" />
+            </div>
+            <p className="text-sm text-gray-600 mb-2">
+              {reportConfig.chartType.replace('_', ' ').toUpperCase()} Chart
+            </p>
+            <p className="text-xs text-gray-500">
+              {reportConfig.visualizationSettings.dimensions.width} × {reportConfig.visualizationSettings.dimensions.height}
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    const chartProps = {
+      data: previewData,
+      settings: reportConfig.visualizationSettings,
+      className: "border border-gray-200 rounded-lg"
+    };
+
+    switch (reportConfig.chartType) {
+      case 'bar':
+        return <D3BarChart {...chartProps} />;
+      case 'line':
+        return <D3LineChart {...chartProps} />;
+      case 'pie':
+        return <D3PieChart {...chartProps} />;
+      case 'growth_progression':
+        return <GrowthProgressionChart {...chartProps} />;
+      default:
+        return <D3BarChart {...chartProps} />;
+    }
   };
 
   const renderPreviewContent = () => {
@@ -178,28 +229,8 @@ export const PreviewPanel: React.FC<PreviewPanelProps> = ({
             </div>
           </div>
 
-          {/* Chart placeholder - In a real implementation, this would render the D3 chart */}
-          <div 
-            className="border border-gray-200 rounded-lg bg-gray-50 flex items-center justify-center"
-            style={{ 
-              width: reportConfig.visualizationSettings.dimensions.width,
-              height: reportConfig.visualizationSettings.dimensions.height,
-              maxWidth: '100%',
-              maxHeight: '500px'
-            }}
-          >
-            <div className="text-center">
-              <div className="w-16 h-16 bg-gray-200 rounded-full flex items-center justify-center mb-4 mx-auto">
-                <BarChart size={32} className="text-gray-400" />
-              </div>
-              <p className="text-sm text-gray-600 mb-2">
-                {reportConfig.chartType.replace('_', ' ').toUpperCase()} Chart
-              </p>
-              <p className="text-xs text-gray-500">
-                {reportConfig.visualizationSettings.dimensions.width} × {reportConfig.visualizationSettings.dimensions.height}
-              </p>
-            </div>
-          </div>
+          {/* D3 Chart Rendering */}
+          {renderChart()}
         </div>
 
         {/* Data Sample */}

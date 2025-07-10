@@ -1,11 +1,13 @@
-import React, { useState } from 'react';
-import { Plus, Database, Table, Link, Search, Settings } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Plus, Database, Table, Link, Search, Settings, Trash2, X } from 'lucide-react';
 import Button from '../../common/Button';
 import { DataSource } from '../../../types/reporting';
+import { ReportingDataService } from '../../../services/reportingDataService';
 
 interface DataSourcePanelProps {
   dataSources: DataSource[];
   onAddDataSource: (dataSource: DataSource) => void;
+  onRemoveDataSource: (id: string) => void;
   onSelectDataSource: (id: string) => void;
   selectedDataSource: string | null;
 }
@@ -13,50 +15,38 @@ interface DataSourcePanelProps {
 export const DataSourcePanel: React.FC<DataSourcePanelProps> = ({
   dataSources,
   onAddDataSource,
+  onRemoveDataSource,
   onSelectDataSource,
   selectedDataSource,
 }) => {
   const [showAddForm, setShowAddForm] = useState(false);
-  const [newDataSource, setNewDataSource] = useState({
-    name: '',
-    table: '',
-    alias: '',
-  });
+  const [configureDataSource, setConfigureDataSource] = useState<string | null>(null);
 
-  // Available tables in the agricultural system
-  const availableTables = [
-    { name: 'pilot_programs', description: 'Pilot program information' },
-    { name: 'sites', description: 'Site details and configurations' },
-    { name: 'submissions', description: 'Submission data and environmental conditions' },
-    { name: 'petri_observations', description: 'Petri dish observations and growth data' },
-    { name: 'gasifier_observations', description: 'Gasifier readings and chemical data' },
-    { name: 'users', description: 'User information and profiles' },
-    { name: 'companies', description: 'Company information' },
-  ];
+  const [availableDataSources, setAvailableDataSources] = useState<DataSource[]>([]);
 
-  const handleAddDataSource = () => {
-    if (!newDataSource.name || !newDataSource.table) return;
+  useEffect(() => {
+    // Load available data sources from the service
+    const sources = ReportingDataService.getAvailableDataSources();
+    setAvailableDataSources(sources);
+  }, []);
 
-    const dataSource: DataSource = {
-      id: `ds_${Date.now()}`,
-      name: newDataSource.name,
-      table: newDataSource.table,
-      alias: newDataSource.alias || undefined,
-      joins: [],
-      baseFilters: [],
-    };
+  const handleAddDataSource = (sourceId: string) => {
+    const source = availableDataSources.find(s => s.id === sourceId);
+    if (!source) return;
 
-    onAddDataSource(dataSource);
-    setNewDataSource({ name: '', table: '', alias: '' });
+    onAddDataSource(source);
     setShowAddForm(false);
   };
 
-  const handleTableSelect = (tableName: string) => {
-    setNewDataSource(prev => ({
-      ...prev,
-      table: tableName,
-      name: prev.name || tableName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
-    }));
+  const handleRemoveDataSource = (sourceId: string, sourceName: string) => {
+    const confirmed = window.confirm(`Are you sure you want to remove "${sourceName}" from your report?`);
+    if (confirmed) {
+      onRemoveDataSource(sourceId);
+    }
+  };
+
+  const handleConfigureDataSource = (sourceId: string) => {
+    setConfigureDataSource(sourceId);
   };
 
   return (
@@ -91,22 +81,103 @@ export const DataSourcePanel: React.FC<DataSourcePanelProps> = ({
                       Table: {source.table}
                       {source.alias && ` (${source.alias})`}
                     </p>
+                    <p className="text-xs text-gray-500">{source.description}</p>
                   </div>
                 </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  icon={<Settings size={16} />}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    // Handle configure data source
-                  }}
-                >
-                  Configure
-                </Button>
+                <div className="flex items-center space-x-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={<Settings size={16} />}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleConfigureDataSource(source.id);
+                    }}
+                  >
+                    Configure
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={<Trash2 size={16} />}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleRemoveDataSource(source.id, source.name);
+                    }}
+                    className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                  >
+                    Remove
+                  </Button>
+                </div>
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Configure Data Source Dialog */}
+      {configureDataSource && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-medium text-gray-900">Configure Data Source</h3>
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<X size={16} />}
+                onClick={() => setConfigureDataSource(null)}
+              />
+            </div>
+            
+            {(() => {
+              const source = dataSources.find(s => s.id === configureDataSource);
+              if (!source) return null;
+              
+              return (
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Data Source Name
+                    </label>
+                    <p className="text-sm text-gray-900">{source.name}</p>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Table
+                    </label>
+                    <p className="text-sm text-gray-900">{source.table}</p>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Available Fields
+                    </label>
+                    <div className="max-h-32 overflow-y-auto border border-gray-200 rounded-md p-2">
+                      {source.fields.map(field => (
+                        <div key={field.name} className="flex justify-between items-center py-1">
+                          <span className="text-sm text-gray-900">{field.displayName}</span>
+                          <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
+                            {field.type}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  
+                  <div className="flex justify-end space-x-2 pt-4">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setConfigureDataSource(null)}
+                    >
+                      Close
+                    </Button>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
         </div>
       )}
 
@@ -136,72 +207,37 @@ export const DataSourcePanel: React.FC<DataSourcePanelProps> = ({
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Data Source Name
-              </label>
-              <input
-                type="text"
-                value={newDataSource.name}
-                onChange={(e) => setNewDataSource(prev => ({ ...prev, name: e.target.value }))}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                placeholder="Enter a descriptive name"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Table
+                Select Data Source
               </label>
               <div className="space-y-2">
-                {availableTables.map((table) => (
-                  <div
-                    key={table.name}
-                    className={`p-3 border rounded-md cursor-pointer transition-colors ${
-                      newDataSource.table === table.name
-                        ? 'border-primary-500 bg-primary-50'
-                        : 'border-gray-200 hover:border-gray-300'
-                    }`}
-                    onClick={() => handleTableSelect(table.name)}
-                  >
-                    <div className="flex items-center">
-                      <Table size={16} className="text-gray-500 mr-3" />
-                      <div>
-                        <h5 className="font-medium text-gray-900">{table.name}</h5>
-                        <p className="text-sm text-gray-600">{table.description}</p>
+                {availableDataSources
+                  .filter(source => !dataSources.some(selected => selected.id === source.id))
+                  .map((source) => (
+                    <div
+                      key={source.id}
+                      className="p-3 border rounded-md cursor-pointer transition-colors border-gray-200 hover:border-gray-300"
+                      onClick={() => handleAddDataSource(source.id)}
+                    >
+                      <div className="flex items-center">
+                        <Table size={16} className="text-gray-500 mr-3" />
+                        <div>
+                          <h5 className="font-medium text-gray-900">{source.name}</h5>
+                          <p className="text-sm text-gray-600">{source.description}</p>
+                          <p className="text-xs text-gray-500">Table: {source.table}</p>
+                        </div>
                       </div>
                     </div>
+                  ))}
+                
+                {/* Show message if all sources are selected */}
+                {availableDataSources.filter(source => !dataSources.some(selected => selected.id === source.id)).length === 0 && (
+                  <div className="p-4 text-center text-gray-500">
+                    <p className="text-sm">All available data sources have been added to your report.</p>
                   </div>
-                ))}
+                )}
               </div>
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Alias (Optional)
-              </label>
-              <input
-                type="text"
-                value={newDataSource.alias}
-                onChange={(e) => setNewDataSource(prev => ({ ...prev, alias: e.target.value }))}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                placeholder="Short name for this data source"
-              />
-            </div>
-
-            <div className="flex justify-end space-x-3">
-              <Button
-                variant="outline"
-                onClick={() => setShowAddForm(false)}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="primary"
-                onClick={handleAddDataSource}
-                disabled={!newDataSource.name || !newDataSource.table}
-              >
-                Add Data Source
-              </Button>
-            </div>
           </div>
         </div>
       )}

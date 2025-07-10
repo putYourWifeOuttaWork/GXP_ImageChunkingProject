@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Plus, Save, Eye, Settings, Filter, BarChart3, ArrowLeft, AlertCircle, CheckCircle } from 'lucide-react';
+import { Plus, Save, Eye, Settings, Filter, BarChart3, ArrowLeft, AlertCircle, CheckCircle, RotateCcw } from 'lucide-react';
 import Button from '../components/common/Button';
 import Card from '../components/common/Card';
 import { useReportBuilder } from '../hooks/reporting/useReportBuilder';
@@ -26,17 +26,27 @@ const ReportBuilderPage: React.FC = () => {
     state,
     setBasicInfo,
     addDataSource,
+    removeDataSource,
     addDimension,
+    removeDimension,
     addMeasure,
+    removeMeasure,
     addFilter,
+    removeFilter,
     setChartType,
     setActiveStep,
     save,
     generatePreview,
+    getAvailableDimensions,
+    getAvailableMeasures,
     canSave,
     hasChanges,
     isLoading,
     loadReport,
+    resetState,
+    hasDuplicateDimensions,
+    duplicateCount,
+    consolidateDimensions,
   } = useReportBuilder(reportId);
 
   // Load existing report data
@@ -50,25 +60,45 @@ const ReportBuilderPage: React.FC = () => {
   const handleSave = async () => {
     try {
       await save();
-      // Show success message
-      console.log('Report saved successfully');
+      // Show success message and navigate
+      alert('Report created successfully!');
+      navigate('/reports');
     } catch (error) {
       console.error('Error saving report:', error);
+      alert('Failed to create report. Please try again.');
     }
   };
 
   // Handle preview
   const handlePreview = () => {
     generatePreview();
+    setActiveStep(6); // Navigate to preview step
   };
 
   // Handle back navigation
   const handleBack = () => {
+    console.log('handleBack called, hasChanges:', hasChanges);
     if (hasChanges) {
       const confirmed = window.confirm('You have unsaved changes. Are you sure you want to leave?');
-      if (!confirmed) return;
+      console.log('User confirmed:', confirmed);
+      if (confirmed) {
+        // User confirmed they want to leave
+        console.log('Navigating to /reports');
+        navigate('/reports');
+      }
+      return;
     }
+    // No changes, safe to navigate
+    console.log('No changes, navigating to /reports');
     navigate('/reports');
+  };
+
+  // Handle reset
+  const handleReset = () => {
+    const confirmed = window.confirm('Are you sure you want to reset all configuration? This will clear all data sources, dimensions, measures, and filters.');
+    if (confirmed) {
+      resetState();
+    }
   };
 
   // Step configuration
@@ -143,6 +173,7 @@ const ReportBuilderPage: React.FC = () => {
           <DataSourcePanel
             dataSources={state.dataSources}
             onAddDataSource={addDataSource}
+            onRemoveDataSource={removeDataSource}
             onSelectDataSource={() => {}}
             selectedDataSource={state.selectedDataSource}
           />
@@ -152,9 +183,11 @@ const ReportBuilderPage: React.FC = () => {
           <DimensionPanel
             dimensions={state.dimensions}
             onAddDimension={addDimension}
+            onRemoveDimension={removeDimension}
             selectedDimensions={state.selectedDimensions}
             onSelectionChange={() => {}}
             dataSources={state.dataSources}
+            availableDimensions={getAvailableDimensions()}
           />
         );
       case 3:
@@ -162,9 +195,11 @@ const ReportBuilderPage: React.FC = () => {
           <MeasurePanel
             measures={state.measures}
             onAddMeasure={addMeasure}
+            onRemoveMeasure={removeMeasure}
             selectedMeasures={state.selectedMeasures}
             onSelectionChange={() => {}}
             dataSources={state.dataSources}
+            availableMeasures={getAvailableMeasures()}
           />
         );
       case 4:
@@ -172,6 +207,7 @@ const ReportBuilderPage: React.FC = () => {
           <FilterPanel
             filters={state.filters}
             onAddFilter={addFilter}
+            onRemoveFilter={removeFilter}
             dimensions={state.dimensions}
             measures={state.measures}
             dataSources={state.dataSources}
@@ -248,6 +284,17 @@ const ReportBuilderPage: React.FC = () => {
               <Button
                 variant="outline"
                 size="sm"
+                icon={<RotateCcw size={16} />}
+                onClick={handleReset}
+                disabled={isLoading}
+                className="text-red-600 border-red-300 hover:bg-red-50"
+              >
+                Reset
+              </Button>
+              
+              <Button
+                variant="outline"
+                size="sm"
                 icon={<Eye size={16} />}
                 onClick={handlePreview}
                 disabled={!state.isValid || isLoading}
@@ -261,7 +308,7 @@ const ReportBuilderPage: React.FC = () => {
                 icon={<Save size={16} />}
                 onClick={handleSave}
                 disabled={!canSave || isLoading}
-                loading={isLoading}
+                isLoading={isLoading}
               >
                 {isEditing ? 'Save Changes' : 'Create Report'}
               </Button>
@@ -285,7 +332,39 @@ const ReportBuilderPage: React.FC = () => {
           </div>
 
           {/* Main Content */}
-          <div className="lg:col-span-3">
+          <div className="lg:col-span-3 space-y-4">
+            {/* Duplicate Dimensions Notification */}
+            {hasDuplicateDimensions && (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                <div className="flex items-start">
+                  <div className="flex-shrink-0">
+                    <svg className="h-5 w-5 text-amber-400" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                    </svg>
+                  </div>
+                  <div className="ml-3 flex-1">
+                    <h3 className="text-sm font-medium text-amber-800">
+                      Duplicate Dimensions Detected
+                    </h3>
+                    <div className="mt-1 text-sm text-amber-700">
+                      <p>
+                        You have {duplicateCount} duplicate dimension{duplicateCount > 1 ? 's' : ''} that will be automatically consolidated when previewing or saving your report.
+                      </p>
+                    </div>
+                    <div className="mt-3">
+                      <button
+                        type="button"
+                        onClick={consolidateDimensions}
+                        className="bg-amber-100 px-3 py-2 rounded-md text-sm font-medium text-amber-800 hover:bg-amber-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-500"
+                      >
+                        Consolidate Now
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+            
             <Card>
               <div className="p-6">
                 {renderStepContent()}

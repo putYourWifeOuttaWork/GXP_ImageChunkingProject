@@ -65,7 +65,7 @@ export const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
       icon: <Grid size={24} />,
       description: 'Show correlations',
       category: 'Advanced',
-      requirements: { minDimensions: 2, minMeasures: 2 },
+      requirements: { minDimensions: 0, minMeasures: 2 },
       bestFor: 'Correlation analysis and outlier detection',
     },
     {

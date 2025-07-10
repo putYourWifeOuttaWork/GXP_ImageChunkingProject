@@ -1,11 +1,13 @@
-import React, { useState } from 'react';
-import { Plus, Filter, Calendar, Type, Hash, Search } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Plus, Filter, Calendar, Type, Hash, Search, Trash2 } from 'lucide-react';
 import Button from '../../common/Button';
 import { Filter as FilterType, Dimension, Measure, DataSource } from '../../../types/reporting';
+import { ReportingDataService } from '../../../services/reportingDataService';
 
 interface FilterPanelProps {
   filters: FilterType[];
   onAddFilter: (filter: FilterType) => void;
+  onRemoveFilter: (id: string) => void;
   dimensions: Dimension[];
   measures: Measure[];
   dataSources: DataSource[];
@@ -14,11 +16,14 @@ interface FilterPanelProps {
 export const FilterPanel: React.FC<FilterPanelProps> = ({
   filters,
   onAddFilter,
+  onRemoveFilter,
   dimensions,
   measures,
   dataSources,
 }) => {
   const [showAddForm, setShowAddForm] = useState(false);
+  const [dynamicFilterFields, setDynamicFilterFields] = useState<Array<{ id: string; name: string; displayName: string; dataType: string; source: string; field: string }>>([]);
+  const [loadingFilterFields, setLoadingFilterFields] = useState(false);
   const [newFilter, setNewFilter] = useState({
     name: '',
     field: '',
@@ -26,8 +31,34 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
     type: 'text' as const,
     operator: 'equals' as const,
     value: '',
+    startValue: '', // For range filters
+    endValue: '',   // For range filters
     label: '',
   });
+
+  // Fetch dynamic filter fields when dataSources change
+  useEffect(() => {
+    const fetchFilterFields = async () => {
+      if (dataSources.length === 0) {
+        setDynamicFilterFields([]);
+        return;
+      }
+      
+      setLoadingFilterFields(true);
+      try {
+        const fields = await ReportingDataService.getAvailableFilterFields(dataSources);
+        setDynamicFilterFields(fields);
+        console.log('Dynamic filter fields loaded:', fields.length, 'fields');
+      } catch (error) {
+        console.error('Error loading dynamic filter fields:', error);
+        setDynamicFilterFields([]);
+      } finally {
+        setLoadingFilterFields(false);
+      }
+    };
+    
+    fetchFilterFields();
+  }, [dataSources]);
 
   const filterTypes = [
     { value: 'text', label: 'Text', icon: <Type size={16} /> },
@@ -78,6 +109,22 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
   const handleAddFilter = () => {
     if (!newFilter.name || !newFilter.field || !newFilter.dataSource) return;
 
+    const isRangeOperator = newFilter.operator === 'between' || newFilter.operator === 'not_between';
+    const isDateRange = newFilter.type === 'daterange';
+    
+    // For range filters, validate that both start and end values are provided
+    if ((isRangeOperator || isDateRange) && (!newFilter.startValue || !newFilter.endValue)) {
+      alert('Please provide both start and end values for range filters');
+      return;
+    }
+
+    // Construct the filter value based on type
+    let filterValue = newFilter.value;
+    if (isRangeOperator || isDateRange) {
+      // For range filters, combine start and end values
+      filterValue = `${newFilter.startValue},${newFilter.endValue}`;
+    }
+
     const filter: FilterType = {
       id: `filter_${Date.now()}`,
       name: newFilter.name,
@@ -85,24 +132,35 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
       dataSource: newFilter.dataSource,
       type: newFilter.type,
       operator: newFilter.operator,
-      value: newFilter.value,
+      value: filterValue,
       label: newFilter.label || newFilter.name,
     };
 
     onAddFilter(filter);
-    setNewFilter({ name: '', field: '', dataSource: '', type: 'text', operator: 'equals', value: '', label: '' });
+    setNewFilter({ 
+      name: '', 
+      field: '', 
+      dataSource: '', 
+      type: 'text', 
+      operator: 'equals', 
+      value: '', 
+      startValue: '', 
+      endValue: '', 
+      label: '' 
+    });
     setShowAddForm(false);
   };
 
   const handleDimensionSelect = (dimension: Dimension) => {
-    const dataSource = dataSources.find(ds => ds.id === dimension.dataSource);
+    const sourceId = (dimension as any).source || dimension.dataSource;
+    const dataSource = dataSources.find(ds => ds.id === sourceId);
     if (!dataSource) return;
 
     setNewFilter(prev => ({
       ...prev,
-      name: dimension.name,
+      name: dimension.displayName || dimension.name,
       field: dimension.field,
-      dataSource: dimension.dataSource,
+      dataSource: sourceId,
       type: getFilterTypeForDataType(dimension.dataType),
       label: dimension.displayName || dimension.name,
     }));
@@ -124,14 +182,24 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
 
   const getFilterTypeForDataType = (dataType: string): 'text' | 'number' | 'date' | 'select' => {
     switch (dataType) {
+      case 'numeric':
+      case 'integer':
       case 'number':
         return 'number';
       case 'date':
+      case 'timestamp':
         return 'date';
       case 'boolean':
         return 'select';
       default:
         return 'text';
+    }
+  };
+
+  const handleRemoveFilter = (filterId: string, filterName: string) => {
+    const confirmed = window.confirm(`Are you sure you want to remove filter "${filterName}"?`);
+    if (confirmed) {
+      onRemoveFilter(filterId);
     }
   };
 
@@ -151,7 +219,135 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
     }
   };
 
+  // Organize dynamic filter fields by data source for the dropdown
+  const getOrganizedFilterFields = () => {
+    const fieldsByDataSource: Record<string, Array<{ field: string; displayName: string; dataType: string; type: string }>> = {};
+    
+    dynamicFilterFields.forEach(field => {
+      const dataSource = dataSources.find(ds => ds.id === field.source);
+      if (dataSource) {
+        if (!fieldsByDataSource[dataSource.name]) {
+          fieldsByDataSource[dataSource.name] = [];
+        }
+        fieldsByDataSource[dataSource.name].push({
+          field: field.field,
+          displayName: field.displayName,
+          dataType: field.dataType,
+          type: 'column'
+        });
+      }
+    });
+    
+    return fieldsByDataSource;
+  };
+
+  const organizedFilterFields = getOrganizedFilterFields();
+
+  // Update field selection logic for dynamic fields
+  const handleDynamicFieldSelect = (fieldInfo: string) => {
+    const [dataSourceName, fieldName] = fieldInfo.split('.');
+    const dataSource = dataSources.find(ds => ds.name === dataSourceName);
+    if (!dataSource) return;
+    
+    const field = dynamicFilterFields.find(f => f.source === dataSource.id && f.field === fieldName);
+    if (!field) return;
+    
+    setNewFilter(prev => ({
+      ...prev,
+      field: fieldName,
+      dataSource: dataSource.id,
+      type: getFilterTypeForDataType(field.dataType),
+      name: prev.name || field.displayName.replace(` (${dataSource.name})`, ''),
+      label: prev.label || field.displayName.replace(` (${dataSource.name})`, '')
+    }));
+  };
+
   const renderValueInput = () => {
+    const isRangeOperator = newFilter.operator === 'between' || newFilter.operator === 'not_between';
+    const isDateRange = newFilter.type === 'daterange';
+    
+    // Handle date range type or range operators
+    if (isDateRange || (newFilter.type === 'date' && isRangeOperator)) {
+      return (
+        <div className="space-y-3">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
+            <input
+              type="date"
+              value={newFilter.startValue}
+              onChange={(e) => setNewFilter(prev => ({ ...prev, startValue: e.target.value }))}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">End Date</label>
+            <input
+              type="date"
+              value={newFilter.endValue}
+              onChange={(e) => {
+                const endDate = e.target.value;
+                const startDate = newFilter.startValue;
+                
+                // Validate that end date is after start date
+                if (startDate && endDate && new Date(endDate) < new Date(startDate)) {
+                  alert('End date must be after start date');
+                  return;
+                }
+                
+                setNewFilter(prev => ({ ...prev, endValue: endDate }));
+              }}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+            />
+          </div>
+          {newFilter.startValue && newFilter.endValue && (
+            <div className="text-sm text-gray-600">
+              Duration: {Math.ceil((new Date(newFilter.endValue).getTime() - new Date(newFilter.startValue).getTime()) / (1000 * 60 * 60 * 24))} days
+            </div>
+          )}
+        </div>
+      );
+    }
+    
+    // Handle number range
+    if (newFilter.type === 'number' && isRangeOperator) {
+      return (
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">From</label>
+            <input
+              type="number"
+              value={newFilter.startValue}
+              onChange={(e) => setNewFilter(prev => ({ ...prev, startValue: e.target.value }))}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+              placeholder="Min value"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">To</label>
+            <input
+              type="number"
+              value={newFilter.endValue}
+              onChange={(e) => {
+                const endValue = parseFloat(e.target.value);
+                const startValue = parseFloat(newFilter.startValue);
+                
+                // Validate that end value is greater than start value
+                if (!isNaN(startValue) && !isNaN(endValue) && endValue < startValue) {
+                  alert('End value must be greater than start value');
+                  return;
+                }
+                
+                setNewFilter(prev => ({ ...prev, endValue: e.target.value }));
+              }}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+              placeholder="Max value"
+            />
+          </div>
+        </div>
+      );
+    }
+
+    // Regular single value inputs
     switch (newFilter.type) {
       case 'number':
         return (
@@ -244,9 +440,9 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => {
-                      // Handle remove filter
-                    }}
+                    icon={<Trash2 size={16} />}
+                    onClick={() => handleRemoveFilter(filter.id, filter.label || filter.name)}
+                    className="text-red-600 hover:text-red-700 hover:bg-red-50"
                   >
                     Remove
                   </Button>
@@ -335,33 +531,53 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
 
             {/* Manual Configuration */}
             <div className="border-t pt-4">
-              <h5 className="text-sm font-medium text-gray-700 mb-3">Manual Configuration</h5>
+              <h5 className="text-sm font-medium text-gray-700 mb-3">Filter by Any Column</h5>
               <div className="space-y-3">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Filter Name
-                    </label>
-                    <input
-                      type="text"
-                      value={newFilter.name}
-                      onChange={(e) => setNewFilter(prev => ({ ...prev, name: e.target.value }))}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                      placeholder="Enter filter name"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Field
-                    </label>
-                    <input
-                      type="text"
-                      value={newFilter.field}
-                      onChange={(e) => setNewFilter(prev => ({ ...prev, field: e.target.value }))}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                      placeholder="Database field name"
-                    />
-                  </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Field * {loadingFilterFields && <span className="text-gray-500">(Loading...)</span>}
+                  </label>
+                  <select
+                    value={newFilter.field && newFilter.dataSource ? `${dataSources.find(ds => ds.id === newFilter.dataSource)?.name}.${newFilter.field}` : ''}
+                    onChange={(e) => handleDynamicFieldSelect(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                    disabled={loadingFilterFields || dynamicFilterFields.length === 0}
+                  >
+                    <option value="">
+                      {loadingFilterFields 
+                        ? 'Loading available fields...' 
+                        : dynamicFilterFields.length === 0 
+                        ? 'No fields available' 
+                        : 'Select any column to filter by...'}
+                    </option>
+                    {Object.entries(organizedFilterFields).map(([dataSourceName, fields]) => (
+                      <optgroup key={dataSourceName} label={`${dataSourceName} (${fields.length} columns)`}>
+                        {fields.map(field => (
+                          <option key={`${dataSourceName}.${field.field}`} value={`${dataSourceName}.${field.field}`}>
+                            {field.field} - {field.displayName.replace(` (${dataSourceName})`, '')}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                  {dynamicFilterFields.length > 0 && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      Showing {dynamicFilterFields.length} columns from {dataSources.length} selected table(s)
+                    </p>
+                  )}
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Filter Name
+                  </label>
+                  <input
+                    type="text"
+                    value={newFilter.name}
+                    onChange={(e) => setNewFilter(prev => ({ ...prev, name: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                    placeholder="Enter filter name (auto-filled from field)"
+                  />
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

@@ -7,9 +7,99 @@ import {
   Filter, 
   DataSource,
   ChartType,
-  VisualizationSettings
+  VisualizationSettings,
+  AggregatedData,
+  ReportConfig
 } from '../../types/reporting';
 import { useCreateReport, useUpdateReport, reportQueryKeys } from './useReportData';
+import { ReportingDataService } from '../../services/reportingDataService';
+import { useAuthStore } from '../../stores/authStore';
+import { useCompanies } from '../useCompanies';
+
+// Constants for localStorage
+const REPORT_BUILDER_CACHE_KEY = 'gasx_report_builder_state';
+const CACHE_EXPIRY_HOURS = 24;
+
+// Cache utilities
+const saveStateToCache = (state: ReportBuilderState, reportId?: string) => {
+  try {
+    const cacheData = {
+      state,
+      reportId: reportId || null,
+      timestamp: Date.now(),
+      version: '1.0'
+    };
+    localStorage.setItem(REPORT_BUILDER_CACHE_KEY, JSON.stringify(cacheData));
+  } catch (error) {
+    console.warn('Failed to save report builder state to cache:', error);
+  }
+};
+
+const loadStateFromCache = (): { state: ReportBuilderState | null; reportId: string | null } => {
+  try {
+    const cached = localStorage.getItem(REPORT_BUILDER_CACHE_KEY);
+    if (!cached) return { state: null, reportId: null };
+    
+    const cacheData = JSON.parse(cached);
+    const { state, reportId, timestamp, version } = cacheData;
+    
+    // Check if cache is expired
+    const hoursAgo = (Date.now() - timestamp) / (1000 * 60 * 60);
+    if (hoursAgo > CACHE_EXPIRY_HOURS) {
+      localStorage.removeItem(REPORT_BUILDER_CACHE_KEY);
+      return { state: null, reportId: null };
+    }
+    
+    // Version check for future compatibility
+    if (version !== '1.0') {
+      localStorage.removeItem(REPORT_BUILDER_CACHE_KEY);
+      return { state: null, reportId: null };
+    }
+    
+    return { state, reportId };
+  } catch (error) {
+    console.warn('Failed to load report builder state from cache:', error);
+    localStorage.removeItem(REPORT_BUILDER_CACHE_KEY);
+    return { state: null, reportId: null };
+  }
+};
+
+const clearStateCache = () => {
+  try {
+    console.log('Debug: Clearing localStorage cache for key:', REPORT_BUILDER_CACHE_KEY);
+    localStorage.removeItem(REPORT_BUILDER_CACHE_KEY);
+    console.log('Debug: Cache cleared successfully');
+  } catch (error) {
+    console.warn('Failed to clear report builder cache:', error);
+  }
+};
+
+// Helper function to consolidate duplicate dimensions
+const consolidateDimensions = (dimensions: Dimension[]): Dimension[] => {
+  const dimensionMap = new Map<string, Dimension>();
+  
+  dimensions.forEach(dim => {
+    // Use field name as the key for consolidation
+    const key = dim.field;
+    
+    if (dimensionMap.has(key)) {
+      // Dimension field already exists, keep the first one but update display name if needed
+      const existing = dimensionMap.get(key)!;
+      
+      // If the existing dimension has a generic name and this one has a better display name, update it
+      if (!existing.displayName || existing.displayName === existing.name) {
+        if (dim.displayName && dim.displayName !== dim.name) {
+          existing.displayName = dim.displayName;
+        }
+      }
+    } else {
+      // New dimension field, add it
+      dimensionMap.set(key, { ...dim });
+    }
+  });
+  
+  return Array.from(dimensionMap.values());
+};
 
 // Report builder state
 export interface ReportBuilderState {
@@ -98,13 +188,13 @@ const initialState: ReportBuilderState = {
       x: { show: true, scale: 'linear', grid: { show: true } },
       y: { show: true, scale: 'linear', grid: { show: true } }
     },
-    legends: { show: true, position: 'right', orientation: 'vertical', padding: 10, itemSpacing: 5, fontSize: 12, fontFamily: 'Arial', color: '#333', interactive: true },
+    legends: { show: true, position: 'top', orientation: 'horizontal', padding: 10, itemSpacing: 5, fontSize: 12, fontFamily: 'Arial', color: '#333', interactive: true },
     tooltips: { show: true },
     animations: { enabled: true, duration: 300, easing: 'ease-in-out' },
     interactions: { 
       zoom: { enabled: false, type: 'wheel', extent: [[0, 0], [800, 400]], scaleExtent: [1, 10] },
       pan: { enabled: false, extent: [[0, 0], [800, 400]] },
-      brush: { enabled: false, type: 'x', extent: [[0, 0], [800, 400]] },
+      brush: { enabled: true, type: 'x', extent: [[0, 0], [800, 400]] },
       selection: { enabled: true, mode: 'single' },
       hover: { enabled: true },
       click: { enabled: true, action: 'select' }
@@ -310,10 +400,37 @@ const reportBuilderReducer = (state: ReportBuilderState, action: ReportBuilderAc
 
 // Main hook for report builder
 export const useReportBuilder = (initialReportId?: string) => {
-  const [state, dispatch] = useReducer(reportBuilderReducer, initialState);
+  // Get current user from auth store
+  const { user } = useAuthStore();
+  const { userCompany } = useCompanies();
+  
+  // Initialize state with cache if available
+  const [cachedData] = useState(() => {
+    // Only load from cache if no specific report ID is provided
+    if (!initialReportId) {
+      return loadStateFromCache();
+    }
+    return { state: null, reportId: null };
+  });
+  
+  const [state, dispatch] = useReducer(reportBuilderReducer, 
+    cachedData.state || initialState
+  );
   const queryClient = useQueryClient();
   const createReport = useCreateReport();
   const updateReport = useUpdateReport();
+  
+  // Cache state on every change (debounced)
+  useEffect(() => {
+    if (state.isDirty || state.name || state.dataSources.length > 0 || 
+        state.dimensions.length > 0 || state.measures.length > 0) {
+      const timeoutId = setTimeout(() => {
+        saveStateToCache(state, initialReportId);
+      }, 500); // Debounce saves
+      
+      return () => clearTimeout(timeoutId);
+    }
+  }, [state, initialReportId]);
   
   // Auto-save functionality
   useEffect(() => {
@@ -444,23 +561,50 @@ export const useReportBuilder = (initialReportId?: string) => {
   }, []);
   
   const resetState = useCallback(() => {
+    console.log('Debug: resetState called, clearing cache and resetting state');
+    clearStateCache();
     dispatch({ type: 'RESET_STATE' });
+    console.log('Debug: resetState completed');
   }, []);
+  
+  // Function to manually consolidate dimensions in state
+  const consolidateStateDimensions = useCallback(() => {
+    const consolidated = consolidateDimensions(state.dimensions);
+    // Only update if there were actual duplicates removed
+    if (consolidated.length < state.dimensions.length) {
+      // Replace all dimensions with consolidated ones
+      state.dimensions.forEach(dim => {
+        dispatch({ type: 'REMOVE_DIMENSION', payload: dim.id });
+      });
+      consolidated.forEach(dim => {
+        dispatch({ type: 'ADD_DIMENSION', payload: dim });
+      });
+    }
+  }, [state.dimensions]);
   
   // Save functionality
   const handleSave = useCallback(async () => {
-    if (!state.isValid) return;
+    if (!state.isValid) {
+      throw new Error('Report configuration is not valid');
+    }
+    
+    if (!user) {
+      throw new Error('User not authenticated');
+    }
     
     dispatch({ type: 'SET_IS_LOADING', payload: true });
     
     try {
+      // Consolidate duplicate dimensions before saving
+      const consolidatedDimensions = consolidateDimensions(state.dimensions);
+      
       const reportData: any = {
         name: state.name,
         description: state.description,
         category: state.category,
         type: state.type,
         dataSources: state.dataSources,
-        dimensions: state.dimensions,
+        dimensions: consolidatedDimensions,
         measures: state.measures,
         filters: state.filters,
         chartType: state.chartType,
@@ -475,8 +619,8 @@ export const useReportBuilder = (initialReportId?: string) => {
       } else {
         await createReport.mutateAsync({
           ...reportData,
-          createdByUserId: 'current-user-id', // TODO: Get from auth
-          companyId: 'current-company-id', // TODO: Get from auth
+          createdByUserId: user.id,
+          companyId: userCompany?.company_id || null,
           programIds: [],
           isPublic: false,
           isTemplate: false,
@@ -485,36 +629,77 @@ export const useReportBuilder = (initialReportId?: string) => {
       
       dispatch({ type: 'SET_LAST_SAVED', payload: new Date().toISOString() });
       queryClient.invalidateQueries({ queryKey: reportQueryKeys.lists() });
+      
+      // Clear cache after successful save
+      clearStateCache();
     } catch (error) {
       console.error('Error saving report:', error);
+      // Re-throw the error so it can be handled by the calling function
+      throw error;
     } finally {
       dispatch({ type: 'SET_IS_LOADING', payload: false });
     }
-  }, [state, initialReportId, updateReport, createReport, queryClient]);
+  }, [state, initialReportId, updateReport, createReport, queryClient, user, userCompany]);
   
+  // Get available dimensions based on selected data sources
+  const getAvailableDimensions = useCallback((): Dimension[] => {
+    return ReportingDataService.getAvailableDimensions(state.dataSources);
+  }, [state.dataSources]);
+
+  // Get available measures based on selected data sources
+  const getAvailableMeasures = useCallback((): Measure[] => {
+    return ReportingDataService.getAvailableMeasures(state.dataSources);
+  }, [state.dataSources]);
+
   // Preview functionality
-  const generatePreview = useCallback(async () => {
-    if (!state.isValid) return;
+  const generatePreview = useCallback(async (): Promise<AggregatedData | null> => {
+    if (!state.isValid || state.dataSources.length === 0 || state.measures.length === 0) {
+      return null;
+    }
     
     dispatch({ type: 'SET_IS_LOADING', payload: true });
     
     try {
-      // Generate preview data based on current configuration
-      // This would typically involve executing a query with the current settings
-      const previewData = {
-        data: [], // Mock data for now
-        metadata: {
-          dimensions: state.dimensions,
-          measures: state.measures,
-          lastUpdated: new Date().toISOString(),
-        },
-        totalCount: 0,
-        executionTime: 0,
+      // Consolidate duplicate dimensions before creating report config
+      const consolidatedDimensions = consolidateDimensions(state.dimensions);
+      
+      // Build report config from current state
+      console.log('Debug: generatePreview filters:', state.filters.length, state.filters);
+      console.log('Debug: generatePreview state.isDirty:', state.isDirty);
+      console.log('Debug: generatePreview localStorage cache:', localStorage.getItem(REPORT_BUILDER_CACHE_KEY));
+      
+      const reportConfig: ReportConfig = {
+        id: 'preview',
+        name: state.name || 'Preview Report',
+        description: state.description || '',
+        category: state.category,
+        type: state.type,
+        dataSources: state.dataSources,
+        dimensions: consolidatedDimensions,
+        measures: state.measures,
+        filters: state.filters,
+        chartType: state.chartType,
+        visualizationSettings: state.visualizationSettings,
+        createdByUserId: '',
+        companyId: '',
+        programIds: [],
+        isPublic: false,
+        isTemplate: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        queryCacheTtl: 3600,
+        autoRefresh: false,
+        tags: []
       };
+
+      // Execute report and get aggregated data
+      const previewData = await ReportingDataService.executeReport(reportConfig);
       
       dispatch({ type: 'SET_PREVIEW_DATA', payload: previewData });
+      return previewData;
     } catch (error) {
       console.error('Error generating preview:', error);
+      return null;
     } finally {
       dispatch({ type: 'SET_IS_LOADING', payload: false });
     }
@@ -550,10 +735,16 @@ export const useReportBuilder = (initialReportId?: string) => {
     // Operations
     save: handleSave,
     generatePreview,
+    getAvailableDimensions,
+    getAvailableMeasures,
+    clearCache: clearStateCache,
+    consolidateDimensions: consolidateStateDimensions,
     
     // Computed properties
     canSave: state.isValid && state.isDirty,
     hasChanges: state.isDirty,
     isLoading: state.isLoading || createReport.isPending || updateReport.isPending,
+    hasDuplicateDimensions: state.dimensions.length > consolidateDimensions(state.dimensions).length,
+    duplicateCount: state.dimensions.length - consolidateDimensions(state.dimensions).length,
   };
 };
