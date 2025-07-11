@@ -49,6 +49,10 @@ export interface Filter {
   value: any;
   logic?: FilterLogic;
   
+  // Relationship configuration for cross-table filtering
+  relationshipPath?: RelationshipPath[];
+  targetTable?: string;
+  
   // UI configuration
   label?: string;
   placeholder?: string;
@@ -67,6 +71,15 @@ export interface Filter {
   createdAt?: string;
   updatedAt?: string;
   createdBy?: string;
+}
+
+// Defines the path through related tables to reach the filter field
+export interface RelationshipPath {
+  fromTable: string;
+  toTable: string;
+  joinField: string;
+  foreignField: string;
+  joinType?: 'INNER' | 'LEFT' | 'RIGHT';
 }
 
 // Filter validation
@@ -435,4 +448,101 @@ export interface ChemicalTypeFilter extends SelectFilter {
     concentration?: number;
     effectiveness?: number;
   }>;
+}
+
+// Predefined relationship paths for common cross-table filtering scenarios
+export const COMMON_RELATIONSHIP_PATHS = {
+  // From observations to program fields
+  observationsToProgramDates: [
+    {
+      fromTable: 'petri_observations',
+      toTable: 'submissions',
+      joinField: 'submission_id',
+      foreignField: 'submission_id',
+      joinType: 'INNER' as const
+    },
+    {
+      fromTable: 'submissions',
+      toTable: 'sites',
+      joinField: 'site_id',
+      foreignField: 'site_id',
+      joinType: 'INNER' as const
+    },
+    {
+      fromTable: 'sites',
+      toTable: 'pilot_programs',
+      joinField: 'program_id',
+      foreignField: 'program_id',
+      joinType: 'INNER' as const
+    }
+  ],
+  
+  // From observations to site fields
+  observationsToSite: [
+    {
+      fromTable: 'petri_observations',
+      toTable: 'sites',
+      joinField: 'site_id',
+      foreignField: 'site_id',
+      joinType: 'INNER' as const
+    }
+  ],
+  
+  // From observations to submission fields
+  observationsToSubmission: [
+    {
+      fromTable: 'petri_observations',
+      toTable: 'submissions',
+      joinField: 'submission_id',
+      foreignField: 'submission_id',
+      joinType: 'INNER' as const
+    }
+  ],
+  
+  // From submissions to program fields
+  submissionsToProgram: [
+    {
+      fromTable: 'submissions',
+      toTable: 'sites',
+      joinField: 'site_id',
+      foreignField: 'site_id',
+      joinType: 'INNER' as const
+    },
+    {
+      fromTable: 'sites',
+      toTable: 'pilot_programs',
+      joinField: 'program_id',
+      foreignField: 'program_id',
+      joinType: 'INNER' as const
+    }
+  ],
+  
+  // From submissions to site fields
+  submissionsToSite: [
+    {
+      fromTable: 'submissions',
+      toTable: 'sites',
+      joinField: 'site_id',
+      foreignField: 'site_id',
+      joinType: 'INNER' as const
+    }
+  ],
+  
+  // From sites to program fields
+  sitesToProgram: [
+    {
+      fromTable: 'sites',
+      toTable: 'pilot_programs',
+      joinField: 'program_id',
+      foreignField: 'program_id',
+      joinType: 'INNER' as const
+    }
+  ]
+};
+
+// Helper function to determine relationship path based on source and target tables
+export function getRelationshipPath(sourceTable: string, targetTable: string): RelationshipPath[] | null {
+  const key = `${sourceTable}To${targetTable.charAt(0).toUpperCase() + targetTable.slice(1)}`;
+  const paths = COMMON_RELATIONSHIP_PATHS as any;
+  return paths[key] || null;
 }

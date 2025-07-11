@@ -5,10 +5,36 @@ import {
   AggregatedData,
   Dimension,
   Measure,
-  Filter 
+  Filter,
+  RelationshipPath 
 } from '../types/reporting';
 
 export class ReportingDataService {
+  
+  // Clear all cached query results
+  static clearAllCaches(): void {
+    try {
+      // Clear localStorage items that might contain cached data
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && (key.includes('query') || key.includes('cache') || key.includes('report') || key.includes('supabase'))) {
+          keysToRemove.push(key);
+        }
+      }
+      keysToRemove.forEach(key => {
+        console.log('Clearing cache key:', key);
+        localStorage.removeItem(key);
+      });
+      
+      // Clear session storage
+      sessionStorage.clear();
+      
+      console.log('All query caches cleared');
+    } catch (error) {
+      console.error('Failed to clear caches:', error);
+    }
+  }
   
   // Get all actual columns from selected data source tables
   static async getTableColumns(dataSources: DataSource[]): Promise<{ [tableName: string]: Array<{ name: string; type: string; displayName: string }> }> {
@@ -16,17 +42,17 @@ export class ReportingDataService {
     
     for (const dataSource of dataSources) {
       try {
-        // Query PostgreSQL information_schema to get all columns for this table
+        // Use RPC function to get table columns
         const { data, error } = await supabase
-          .from('information_schema.columns')
-          .select('column_name, data_type, is_nullable')
-          .eq('table_name', dataSource.table)
-          .eq('table_schema', 'public')
-          .order('ordinal_position');
+          .rpc('get_table_columns', { table_name: dataSource.table });
         
         if (error) {
           console.error(`Error fetching columns for ${dataSource.table}:`, error);
-          // Fallback to predefined fields if schema query fails
+          if (error.message?.includes('404') || error.message?.includes('not found')) {
+            console.warn('get_table_columns RPC function not found. Please run the following migration:');
+            console.warn('psql $DATABASE_URL < migrations/20250710_add_get_table_columns_function.sql');
+          }
+          // Fallback to predefined fields if RPC query fails
           tableColumns[dataSource.table] = dataSource.fields.map(field => ({
             name: field.name,
             type: field.type,
@@ -246,8 +272,8 @@ export class ReportingDataService {
   }
 
   // Get available filter fields from selected data sources (dynamic schema-based)
-  static async getAvailableFilterFields(dataSources: DataSource[]): Promise<Array<{ id: string; name: string; displayName: string; dataType: string; source: string; field: string }>> {
-    const filterFields: Array<{ id: string; name: string; displayName: string; dataType: string; source: string; field: string }> = [];
+  static async getAvailableFilterFields(dataSources: DataSource[]): Promise<Array<{ id: string; name: string; displayName: string; dataType: string; source: string; field: string; relationshipPath?: RelationshipPath[]; targetTable?: string; }>> {
+    const filterFields: Array<{ id: string; name: string; displayName: string; dataType: string; source: string; field: string; relationshipPath?: RelationshipPath[]; targetTable?: string; }> = [];
     
     try {
       const tableColumns = await this.getTableColumns(dataSources);
@@ -267,6 +293,128 @@ export class ReportingDataService {
           });
         });
       });
+      
+      // Add related table fields based on the main data source
+      const mainSource = dataSources[0];
+      if (mainSource) {
+        // Add pilot_programs fields if we're looking at observations or submissions
+        if (mainSource.table === 'petri_observations' || mainSource.table === 'gasifier_observations') {
+          // Add program fields
+          const programFields = [
+            { name: 'start_date', displayName: 'Program Start Date', dataType: 'date' },
+            { name: 'end_date', displayName: 'Program End Date', dataType: 'date' },
+            { name: 'name', displayName: 'Program Name', dataType: 'text' },
+            { name: 'phase_type', displayName: 'Program Phase Type', dataType: 'text' }
+          ];
+          
+          programFields.forEach(field => {
+            filterFields.push({
+              id: `pilot_programs.${field.name}`,
+              name: field.name,
+              displayName: `${field.displayName} (Related: Programs)`,
+              dataType: field.dataType,
+              source: mainSource.id,
+              field: field.name,
+              targetTable: 'pilot_programs',
+              relationshipPath: [
+                { fromTable: mainSource.table, toTable: 'submissions', joinField: 'submission_id', foreignField: 'submission_id', joinType: 'INNER' },
+                { fromTable: 'submissions', toTable: 'sites', joinField: 'site_id', foreignField: 'site_id', joinType: 'INNER' },
+                { fromTable: 'sites', toTable: 'pilot_programs', joinField: 'program_id', foreignField: 'program_id', joinType: 'INNER' }
+              ]
+            });
+          });
+          
+          // Add site fields
+          const siteFields = [
+            { name: 'name', displayName: 'Site Name', dataType: 'text' },
+            { name: 'gasifier_deployment_date', displayName: 'Site Gasifier Deployment Date', dataType: 'date' }
+          ];
+          
+          siteFields.forEach(field => {
+            filterFields.push({
+              id: `sites.${field.name}`,
+              name: field.name,
+              displayName: `${field.displayName} (Related: Sites)`,
+              dataType: field.dataType,
+              source: mainSource.id,
+              field: field.name,
+              targetTable: 'sites',
+              relationshipPath: [
+                { fromTable: mainSource.table, toTable: 'sites', joinField: 'site_id', foreignField: 'site_id', joinType: 'INNER' }
+              ]
+            });
+          });
+          
+          // Add submission fields
+          const submissionFields = [
+            { name: 'created_at', displayName: 'Submission Date', dataType: 'timestamp' },
+            { name: 'outdoor_temperature', displayName: 'Submission Temperature', dataType: 'number' },
+            { name: 'outdoor_humidity', displayName: 'Submission Humidity', dataType: 'number' },
+            { name: 'weather', displayName: 'Submission Weather', dataType: 'text' }
+          ];
+          
+          submissionFields.forEach(field => {
+            filterFields.push({
+              id: `submissions.${field.name}`,
+              name: field.name,
+              displayName: `${field.displayName} (Related: Submissions)`,
+              dataType: field.dataType,
+              source: mainSource.id,
+              field: field.name,
+              targetTable: 'submissions',
+              relationshipPath: [
+                { fromTable: mainSource.table, toTable: 'submissions', joinField: 'submission_id', foreignField: 'submission_id', joinType: 'INNER' }
+              ]
+            });
+          });
+        }
+        
+        // Add related fields for submissions table
+        if (mainSource.table === 'submissions') {
+          // Add program fields
+          const programFields = [
+            { name: 'start_date', displayName: 'Program Start Date', dataType: 'date' },
+            { name: 'end_date', displayName: 'Program End Date', dataType: 'date' },
+            { name: 'name', displayName: 'Program Name', dataType: 'text' }
+          ];
+          
+          programFields.forEach(field => {
+            filterFields.push({
+              id: `pilot_programs.${field.name}`,
+              name: field.name,
+              displayName: `${field.displayName} (Related: Programs)`,
+              dataType: field.dataType,
+              source: mainSource.id,
+              field: field.name,
+              targetTable: 'pilot_programs',
+              relationshipPath: [
+                { fromTable: 'submissions', toTable: 'sites', joinField: 'site_id', foreignField: 'site_id', joinType: 'INNER' },
+                { fromTable: 'sites', toTable: 'pilot_programs', joinField: 'program_id', foreignField: 'program_id', joinType: 'INNER' }
+              ]
+            });
+          });
+          
+          // Add site fields
+          const siteFields = [
+            { name: 'name', displayName: 'Site Name', dataType: 'text' }
+          ];
+          
+          siteFields.forEach(field => {
+            filterFields.push({
+              id: `sites.${field.name}`,
+              name: field.name,
+              displayName: `${field.displayName} (Related: Sites)`,
+              dataType: field.dataType,
+              source: mainSource.id,
+              field: field.name,
+              targetTable: 'sites',
+              relationshipPath: [
+                { fromTable: 'submissions', toTable: 'sites', joinField: 'site_id', foreignField: 'site_id', joinType: 'INNER' }
+              ]
+            });
+          });
+        }
+      }
     } catch (error) {
       console.error('Error getting dynamic filter fields, falling back to predefined:', error);
       
@@ -287,6 +435,122 @@ export class ReportingDataService {
     
     console.log('Available filter fields:', filterFields.length, filterFields.slice(0, 5));
     return filterFields;
+  }
+
+  // Build JOIN clauses for cross-table filtering
+  private static buildJoinClausesForFilters(filters: Filter[], mainTable: string): { 
+    joins: string[], 
+    requiredTables: Set<string> 
+  } {
+    const requiredTables = new Set<string>([mainTable]);
+    const joins: string[] = [];
+    const processedJoins = new Set<string>();
+
+    filters.forEach(filter => {
+      if (filter.relationshipPath && filter.relationshipPath.length > 0) {
+        // Build the join path for this filter
+        filter.relationshipPath.forEach(path => {
+          const joinKey = `${path.fromTable}-${path.toTable}`;
+          
+          if (!processedJoins.has(joinKey)) {
+            requiredTables.add(path.fromTable);
+            requiredTables.add(path.toTable);
+            
+            const joinType = path.joinType || 'INNER';
+            joins.push(
+              `${joinType} JOIN ${path.toTable} ON ${path.fromTable}.${path.joinField} = ${path.toTable}.${path.foreignField}`
+            );
+            
+            processedJoins.add(joinKey);
+          }
+        });
+      }
+    });
+
+    return { joins, requiredTables };
+  }
+
+  // Build filter clause with table prefixes for cross-table queries
+  private static buildFilterClauseWithTable(filter: Filter): string {
+    const { field, operator, value, targetTable } = filter;
+    const fieldWithTable = targetTable ? `${targetTable}.${field}` : field;
+    
+    switch (operator) {
+      case 'equals':
+        return `${fieldWithTable} = '${value}'`;
+      case 'not_equals':
+        return `${fieldWithTable} != '${value}'`;
+      case 'greater_than':
+        return `${fieldWithTable} > ${value}`;
+      case 'less_than':
+        return `${fieldWithTable} < ${value}`;
+      case 'greater_than_or_equal':
+        return `${fieldWithTable} >= ${value}`;
+      case 'less_than_or_equal':
+        return `${fieldWithTable} <= ${value}`;
+      case 'contains':
+        return `${fieldWithTable} ILIKE '%${value}%'`;
+      case 'not_contains':
+        return `${fieldWithTable} NOT ILIKE '%${value}%'`;
+      case 'starts_with':
+        return `${fieldWithTable} ILIKE '${value}%'`;
+      case 'ends_with':
+        return `${fieldWithTable} ILIKE '%${value}'`;
+      case 'in':
+        const values = Array.isArray(value) ? value : [value];
+        return `${fieldWithTable} IN (${values.map(v => `'${v}'`).join(', ')})`;
+      case 'not_in':
+        const notInValues = Array.isArray(value) ? value : [value];
+        return `${fieldWithTable} NOT IN (${notInValues.map(v => `'${v}'`).join(', ')})`;
+      case 'is_null':
+        return `${fieldWithTable} IS NULL`;
+      case 'is_not_null':
+        return `${fieldWithTable} IS NOT NULL`;
+      case 'between':
+        // Handle date range format "startDate,endDate"
+        if (typeof value === 'string' && value.includes(',')) {
+          const [start, end] = value.split(',');
+          return `${fieldWithTable} BETWEEN '${start}' AND '${end}'`;
+        }
+        // Handle array format [start, end]
+        if (Array.isArray(value) && value.length === 2) {
+          return `${fieldWithTable} BETWEEN ${value[0]} AND ${value[1]}`;
+        }
+        return `${fieldWithTable} = '${value}'`;
+      case 'range':
+        if (typeof value === 'string' && value.includes(',')) {
+          const [min, max] = value.split(',');
+          return `${fieldWithTable} >= ${min} AND ${fieldWithTable} <= ${max}`;
+        }
+        return `${fieldWithTable} = '${value}'`;
+      default:
+        console.warn(`Unknown filter operator: ${operator}, defaulting to equals`);
+        return `${fieldWithTable} = '${value}'`;
+    }
+  }
+
+  // Execute raw SQL query for complex cross-table filtering
+  private static async executeRawQuery(sql: string): Promise<any[]> {
+    try {
+      const { data, error } = await supabase.rpc('execute_raw_sql', { query: sql });
+      
+      if (error) {
+        console.error('Raw SQL query error:', error);
+        // If RPC function doesn't exist, fall back to returning empty data
+        if (error.message?.includes('404') || error.message?.includes('not found')) {
+          console.warn('execute_raw_sql RPC function not found. Please run the following migration:');
+          console.warn('psql $DATABASE_URL < migrations/20250710_add_execute_raw_sql_function.sql');
+          return [];
+        }
+        throw error;
+      }
+      
+      return data || [];
+    } catch (error) {
+      console.error('Failed to execute raw SQL query:', error);
+      // Return empty array instead of throwing to prevent app crash
+      return [];
+    }
   }
 
   // Get available measures for selected data sources
@@ -421,74 +685,388 @@ export class ReportingDataService {
         const mainSource = config.dataSources[0];
         if (mainSource && mainSource.table) {
           try {
-            // Build select fields including all measures, dimensions, and parent IDs
-            const selectFields = [];
+            // Check if we need cross-source queries
+            const hasMultipleSources = config.dataSources.length > 1;
+            const measureFromDifferentSource = config.measures.some(m => m.dataSource !== mainSource.id);
+            const dimensionFromDifferentSource = config.dimensions.some(d => d.source !== mainSource.id);
             
-            // Build clean select fields without duplicates
-            const uniqueFields = new Set<string>();
-            
-            // Add dimension fields
-            config.dimensions.forEach(dim => {
-              uniqueFields.add(dim.field);
-            });
-            
-            // Add measure fields
-            config.measures.forEach(measure => {
-              uniqueFields.add(measure.field);
-            });
-            
-            // Add parent IDs for drill-down functionality
-            const parentIds = ['submission_id', 'site_id', 'program_id', 'observation_id'];
-            parentIds.forEach(id => {
-              uniqueFields.add(id);
-            });
-            
-            // Add other relevant metadata fields based on table type
-            const commonMetadataFields = ['image_url', 'placement'];
-            const tableSpecificFields = mainSource.table === 'petri_observations' 
-              ? ['petri_code', 'fungicide_used', 'petri_growth_stage', 'x_position', 'y_position', 'growth_index', 'todays_day_of_phase', 'daysinthisprogramphase']
-              : mainSource.table === 'gasifier_observations'
-              ? ['gasifier_code', 'chemical_type', 'measure', 'position_x', 'position_y', 'linear_reading']
-              : [];
-            
-            [...commonMetadataFields, ...tableSpecificFields].forEach(field => {
-              uniqueFields.add(field);
-            });
-            
-            // Convert to array and add related table fields for complete record data
-            const selectFieldsArray = Array.from(uniqueFields);
-            selectFieldsArray.push('submissions(global_submission_id, sites(name, pilot_programs(name)))');
-            
-            console.log('Debug: Direct query selecting fields:', selectFieldsArray);
-            
-            let query = supabase
-              .from(mainSource.table)
-              .select(selectFieldsArray.join(', '));
+            if (hasMultipleSources && (measureFromDifferentSource || dimensionFromDifferentSource)) {
+              // Use raw SQL for cross-source queries
+              console.log('Using raw SQL for cross-source query');
               
-            // Apply simple filters
-            if (config.filters && config.filters.length > 0) {
-              config.filters.forEach(filter => {
-                if (filter.field && filter.operator && filter.value) {
-                  switch (filter.operator) {
-                    case 'equals':
-                      query = query.eq(filter.field, filter.value);
-                      break;
-                    case 'greater_than':
-                      query = query.gt(filter.field, filter.value);
-                      break;
-                    case 'less_than':
-                      query = query.lt(filter.field, filter.value);
-                      break;
-                    default:
-                      query = query.eq(filter.field, filter.value);
+              // Build the SQL with proper JOINs for multiple data sources
+              const selectFields: string[] = [];
+              const requiredJoins = new Set<string>();
+              const hasAggregations = config.measures.some(m => m.aggregation);
+              
+              // Add dimensions with proper table prefixes
+              config.dimensions.forEach(dim => {
+                const sourceTable = config.dataSources.find(ds => ds.id === dim.source)?.table || mainSource.table;
+                selectFields.push(`${sourceTable}.${dim.field} as "${dim.field}"`);
+                
+                if (sourceTable !== mainSource.table) {
+                  // Need to join this table
+                  if (sourceTable === 'submissions' && mainSource.table.includes('observations')) {
+                    requiredJoins.add(`INNER JOIN submissions ON ${mainSource.table}.submission_id = submissions.submission_id`);
+                  } else if (mainSource.table === 'submissions' && sourceTable.includes('observations')) {
+                    requiredJoins.add(`INNER JOIN ${sourceTable} ON submissions.submission_id = ${sourceTable}.submission_id`);
                   }
                 }
               });
-            }
+              
+              // Add measures with proper table prefixes
+              config.measures.forEach(measure => {
+                const sourceTable = config.dataSources.find(ds => ds.id === measure.dataSource)?.table || mainSource.table;
+                
+                // Handle COUNT(*) specially
+                if (measure.field === '*' && measure.aggregation === 'count') {
+                  selectFields.push(`COUNT(${sourceTable}.*) as "${measure.displayName || measure.name}"`);
+                } else if (measure.aggregation) {
+                  // Apply aggregation function
+                  const aggFunc = measure.aggregation.toUpperCase();
+                  selectFields.push(`${aggFunc}(${sourceTable}.${measure.field}) as "${measure.displayName || measure.name}"`);
+                } else {
+                  selectFields.push(`${sourceTable}.${measure.field} as "${measure.field}"`);
+                }
+                
+                if (sourceTable !== mainSource.table) {
+                  // Need to join this table
+                  if (sourceTable === 'submissions' && mainSource.table.includes('observations')) {
+                    requiredJoins.add(`INNER JOIN submissions ON ${mainSource.table}.submission_id = submissions.submission_id`);
+                  } else if (mainSource.table === 'submissions' && sourceTable.includes('observations')) {
+                    requiredJoins.add(`INNER JOIN ${sourceTable} ON submissions.submission_id = ${sourceTable}.submission_id`);
+                  } else if (mainSource.table === 'petri_observations' && sourceTable === 'gasifier_observations') {
+                    // Both observation tables - join through submissions
+                    requiredJoins.add(`INNER JOIN gasifier_observations ON ${mainSource.table}.submission_id = gasifier_observations.submission_id`);
+                  } else if (mainSource.table === 'gasifier_observations' && sourceTable === 'petri_observations') {
+                    requiredJoins.add(`INNER JOIN petri_observations ON ${mainSource.table}.submission_id = petri_observations.submission_id`);
+                  }
+                }
+              });
+              
+              // Only add metadata fields if we're NOT doing aggregations
+              // When doing aggregations, we only want dimension and measure fields
+              if (!hasAggregations) {
+                // Add metadata fields - only if they are in selectedFields or if no selectedFields specified
+                const addMetadataField = (field: string, source: DataSource) => {
+                  if (!source.selectedFields || source.selectedFields.length === 0 || source.selectedFields.includes(field)) {
+                    selectFields.push(`${source.table}.${field}`);
+                  }
+                };
+                
+                // Always add parent IDs for drill-down functionality
+                addMetadataField('submission_id', mainSource);
+                addMetadataField('site_id', mainSource);
+                addMetadataField('program_id', mainSource);
+                if (mainSource.table.includes('observations')) {
+                  addMetadataField('observation_id', mainSource);
+                }
+                
+                // Add selected fields from each data source that aren't already included
+                config.dataSources.forEach(source => {
+                  if (source.selectedFields && source.selectedFields.length > 0) {
+                    source.selectedFields.forEach(field => {
+                      // Check if field is already added as dimension or measure
+                      const fieldAlreadyAdded = selectFields.some(sf => 
+                        sf.includes(`${source.table}.${field}`) || sf.includes(`"${field}"`)
+                      );
+                      
+                      if (!fieldAlreadyAdded) {
+                        selectFields.push(`${source.table}.${field}`);
+                      }
+                    });
+                  }
+                });
+              }
+              
+              let sql = `SELECT ${selectFields.join(', ')} FROM ${mainSource.table}`;
+              
+              // Add JOINs
+              const joinsArray = Array.from(requiredJoins);
+              if (joinsArray.length > 0) {
+                sql += ' ' + joinsArray.join(' ');
+              }
+              
+              // Apply filters with proper table handling
+              const whereConditions: string[] = [];
+              config.filters?.forEach(filter => {
+                if (filter.relationshipPath && filter.relationshipPath.length > 0) {
+                  // Add necessary JOINs for cross-table filters
+                  filter.relationshipPath.forEach(path => {
+                    const joinClause = `${path.joinType || 'INNER'} JOIN ${path.toTable} ON ${path.fromTable}.${path.joinField} = ${path.toTable}.${path.foreignField}`;
+                    requiredJoins.add(joinClause);
+                  });
+                }
+                whereConditions.push(this.buildFilterClauseWithTable(filter));
+              });
+              
+              if (whereConditions.length > 0) {
+                sql += ' WHERE ' + whereConditions.join(' AND ');
+              }
+              
+              // Add GROUP BY if we have aggregations
+              if (hasAggregations && config.dimensions.length > 0) {
+                // We need to group by all non-aggregated fields
+                const groupByFields: string[] = [];
+                
+                // Add dimension fields
+                config.dimensions.forEach(dim => {
+                  const sourceTable = config.dataSources.find(ds => ds.id === dim.source)?.table || mainSource.table;
+                  groupByFields.push(`${sourceTable}.${dim.field}`);
+                });
+                
+                // Add all other non-aggregated fields from the SELECT clause
+                // For now, we'll only group by the dimension fields and let the query handle it
+                // If we're selecting individual records with metadata, we shouldn't use GROUP BY
+                
+                sql += ' GROUP BY ' + groupByFields.join(', ');
+              }
+              
+              sql += ' LIMIT 500';
+              
+              console.log('Generated cross-source SQL:', sql);
+              
+              // Execute raw SQL query
+              data = await this.executeRawQuery(sql);
+              
+              // If raw query fails due to missing RPC function, try a simplified approach
+              if (data.length === 0) {
+                console.log('Raw SQL query returned no data, trying simplified Supabase query');
+                
+                // For aggregated queries with JOINs, we'll need to fetch raw data and aggregate in memory
+                // This is less efficient but works without RPC functions
+                try {
+                  let query = supabase.from(mainSource.table).select('*');
+                  
+                  // Apply filters
+                  config.filters?.forEach(filter => {
+                    const filterValue = filter.value;
+                    switch (filter.operator) {
+                      case 'equals':
+                        query = query.eq(filter.field, filterValue);
+                        break;
+                      case 'greater_than':
+                        query = query.gt(filter.field, filterValue);
+                        break;
+                      case 'less_than':
+                        query = query.lt(filter.field, filterValue);
+                        break;
+                      case 'contains':
+                        query = query.ilike(filter.field, `%${filterValue}%`);
+                        break;
+                    }
+                  });
+                  
+                  // Limit results
+                  query = query.limit(1000);
+                  
+                  const { data: fallbackData, error: fallbackError } = await query;
+                  
+                  if (!fallbackError && fallbackData) {
+                    console.log('Fallback query successful, got', fallbackData.length, 'records');
+                    
+                    // For multi-source queries, we'll need to manually join data
+                    // This is a simplified implementation that works for basic cases
+                    if (config.dataSources.length > 1) {
+                      // Fetch related data from submissions
+                      const submissionIds = [...new Set(fallbackData.map(row => row.submission_id).filter(Boolean))];
+                      if (submissionIds.length > 0) {
+                        const { data: submissionsData } = await supabase
+                          .from('submissions')
+                          .select('*')
+                          .in('submission_id', submissionIds);
+                        
+                        if (submissionsData) {
+                          // Create a map for quick lookup
+                          const submissionsMap = new Map(submissionsData.map(s => [s.submission_id, s]));
+                          
+                          // Merge data
+                          data = fallbackData.map(row => {
+                            const submission = submissionsMap.get(row.submission_id);
+                            return submission ? { ...row, ...submission } : row;
+                          });
+                        } else {
+                          data = fallbackData;
+                        }
+                      } else {
+                        data = fallbackData;
+                      }
+                    } else {
+                      data = fallbackData;
+                    }
+                  }
+                } catch (fallbackError) {
+                  console.error('Fallback query also failed:', fallbackError);
+                }
+              }
+              error = null;
+            } else {
+              // Single source query - continue with normal logic
+              // Build select fields including all measures, dimensions, and parent IDs
+              const selectFields = [];
+              
+              // Build clean select fields without duplicates
+              const uniqueFields = new Set<string>();
+              
+              // Add dimension fields
+              config.dimensions.forEach(dim => {
+                uniqueFields.add(dim.field);
+              });
+              
+              // Add measure fields
+              config.measures.forEach(measure => {
+                uniqueFields.add(measure.field);
+              });
+              
+              // Add parent IDs for drill-down functionality (always include these)
+              const parentIds = ['submission_id', 'site_id', 'program_id', 'observation_id'];
+              parentIds.forEach(id => {
+                uniqueFields.add(id);
+              });
+              
+              // If DataSource has selectedFields, use only those fields
+              // Otherwise, fall back to all available fields
+              if (mainSource.selectedFields && mainSource.selectedFields.length > 0) {
+                // Only add fields that are in the selectedFields list
+                const allowedFields = new Set(mainSource.selectedFields);
+                
+                // Always ensure parent IDs are included for drill-down
+                parentIds.forEach(id => allowedFields.add(id));
+                
+                // Filter uniqueFields to only include allowed fields
+                const tempFields = Array.from(uniqueFields);
+                uniqueFields.clear();
+                tempFields.forEach(field => {
+                  if (allowedFields.has(field)) {
+                    uniqueFields.add(field);
+                  }
+                });
+                
+                // Add any other selected fields that aren't already included
+                mainSource.selectedFields.forEach(field => {
+                  uniqueFields.add(field);
+                });
+              } else {
+                // Fall back to legacy behavior - add all metadata fields
+                const commonMetadataFields = ['image_url', 'placement'];
+                const tableSpecificFields = mainSource.table === 'petri_observations' 
+                  ? ['petri_code', 'fungicide_used', 'petri_growth_stage', 'x_position', 'y_position', 'growth_index', 'todays_day_of_phase', 'daysinthisprogramphase']
+                  : mainSource.table === 'gasifier_observations'
+                  ? ['gasifier_code', 'chemical_type', 'measure', 'position_x', 'position_y', 'linear_reading']
+                  : [];
+                
+                [...commonMetadataFields, ...tableSpecificFields].forEach(field => {
+                  uniqueFields.add(field);
+                });
+              }
+              
+              // Convert to array and add related table fields for complete record data
+              const selectFieldsArray = Array.from(uniqueFields);
+              selectFieldsArray.push('submissions(global_submission_id, sites(name, pilot_programs(name)))');
+              
+              console.log('Debug: Direct query selecting fields:', selectFieldsArray);
+              
+              let query = supabase
+                .from(mainSource.table)
+                .select(selectFieldsArray.join(', '));
+              
+            // Check if we have cross-table filters
+            const hasCrossTableFilters = config.filters?.some(f => f.relationshipPath && f.relationshipPath.length > 0);
             
-            const result = await query.limit(500);
-            data = result.data;
-            error = result.error;
+            if (hasCrossTableFilters) {
+              // Use raw SQL for complex cross-table filtering
+              console.log('Using raw SQL for cross-table filtering');
+              
+              // Build the SQL query with JOINs
+              const { joins, requiredTables } = this.buildJoinClausesForFilters(config.filters || [], mainSource.table);
+              
+              // Build SELECT clause
+              const selectClause = selectFieldsArray.map(field => {
+                // Handle nested selections for raw SQL
+                if (field.includes('(')) {
+                  return null; // Skip nested selections for raw SQL
+                }
+                return `${mainSource.table}.${field}`;
+              }).filter(Boolean).join(', ');
+              
+              // Build WHERE clause
+              const whereConditions = config.filters?.map(filter => {
+                return this.buildFilterClauseWithTable(filter);
+              }) || [];
+              
+              let sql = `SELECT ${selectClause} FROM ${mainSource.table}`;
+              
+              // Add JOINs
+              if (joins.length > 0) {
+                sql += ' ' + joins.join(' ');
+              }
+              
+              // Add WHERE clause
+              if (whereConditions.length > 0) {
+                sql += ' WHERE ' + whereConditions.join(' AND ');
+              }
+              
+              sql += ' LIMIT 500';
+              
+              console.log('Generated SQL for cross-table filtering:', sql);
+              
+              // Execute raw SQL query
+              data = await this.executeRawQuery(sql);
+              error = null;
+            } else {
+              // Apply simple filters for non-cross-table queries
+              if (config.filters && config.filters.length > 0) {
+                config.filters.forEach(filter => {
+                  if (filter.field && filter.operator && filter.value) {
+                    switch (filter.operator) {
+                      case 'equals':
+                        query = query.eq(filter.field, filter.value);
+                        break;
+                      case 'greater_than':
+                        query = query.gt(filter.field, filter.value);
+                        break;
+                      case 'less_than':
+                        query = query.lt(filter.field, filter.value);
+                        break;
+                      case 'greater_than_or_equal':
+                        query = query.gte(filter.field, filter.value);
+                        break;
+                      case 'less_than_or_equal':
+                        query = query.lte(filter.field, filter.value);
+                        break;
+                      case 'contains':
+                        query = query.ilike(filter.field, `%${filter.value}%`);
+                        break;
+                      case 'starts_with':
+                        query = query.ilike(filter.field, `${filter.value}%`);
+                        break;
+                      case 'ends_with':
+                        query = query.ilike(filter.field, `%${filter.value}`);
+                        break;
+                      case 'is_null':
+                        query = query.is(filter.field, null);
+                        break;
+                      case 'is_not_null':
+                        query = query.not(filter.field, 'is', null);
+                        break;
+                      case 'between':
+                        if (typeof filter.value === 'string' && filter.value.includes(',')) {
+                          const [start, end] = filter.value.split(',');
+                          query = query.gte(filter.field, start).lte(filter.field, end);
+                        }
+                        break;
+                      default:
+                        query = query.eq(filter.field, filter.value);
+                    }
+                  }
+                });
+              }
+              
+              const result = await query.limit(500);
+              data = result.data;
+              error = result.error;
+            }
+            } // Close the else block from line 733
           } catch (e) {
             error = e;
           }
@@ -506,7 +1084,14 @@ export class ReportingDataService {
       
       if (!data || data.length === 0) {
         console.log('No data received, falling back to sample data');
+        console.log('Possible reasons:');
+        console.log('1. No data in the selected tables matching your criteria');
+        console.log('2. Filters may be too restrictive');
+        console.log('3. Check if the tables have any data');
         return this.getSampleData(config);
+      } else {
+        console.log('SUCCESS: Using real data from database!');
+        console.log('First row sample:', data[0]);
       }
       
       const processedData = this.processQueryResults(data, config);
@@ -803,95 +1388,384 @@ export class ReportingDataService {
   private static getSampleData(config: ReportConfig): AggregatedData {
     console.log('Generating sample data with config:', config);
     const sampleData = [];
-    const sampleSize = 20;
-
-    for (let i = 0; i < sampleSize; i++) {
-      const dimensions: Record<string, any> = {};
-      const measures: Record<string, any> = {};
-      const metadata: Record<string, any> = {};
-
-      // Generate sample dimension data
-      config.dimensions.forEach(dim => {
-        switch (dim.dataType) {
-          case 'enum':
-            // Use actual enum values if available
-            if (dim.enumValues && dim.enumValues.length > 0) {
-              dimensions[dim.field] = dim.enumValues[i % dim.enumValues.length];
+    
+    // For heatmaps, generate a grid of data
+    if (config.chartType === 'heatmap') {
+      // Generate heatmap grid data
+      const xCategories = ['Zone A', 'Zone B', 'Zone C', 'Zone D', 'Zone E', 'Zone F', 'Zone G', 'Zone H'];
+      const yCategories = ['Day 1', 'Day 2', 'Day 3', 'Day 4', 'Day 5', 'Day 6', 'Day 7'];
+      
+      for (let x = 0; x < xCategories.length; x++) {
+        for (let y = 0; y < yCategories.length; y++) {
+          const dimensions: Record<string, any> = {};
+          const measures: Record<string, any> = {};
+          const metadata: Record<string, any> = {};
+          
+          // Set x and y dimensions for heatmap
+          if (config.dimensions.length >= 2) {
+            dimensions[config.dimensions[0].field] = xCategories[x];
+            dimensions[config.dimensions[1].field] = yCategories[y];
+          } else if (config.dimensions.length === 1) {
+            dimensions[config.dimensions[0].field] = xCategories[x];
+            dimensions['y_category'] = yCategories[y];
+          }
+          
+          // Generate value with some pattern (creates interesting heatmap patterns)
+          const baseValue = 50;
+          const waveX = Math.sin(x * 0.5) * 20;
+          const waveY = Math.cos(y * 0.7) * 15;
+          const noise = (Math.random() - 0.5) * 10;
+          
+          config.measures.forEach(measure => {
+            if (measure.field === 'growth_index' || measure.field === 'effectiveness_score') {
+              // Create a gradient pattern
+              measures[measure.field] = Math.max(0, Math.min(100, baseValue + waveX + waveY + noise));
+            } else if (measure.field === 'outdoor_temperature') {
+              // Temperature gradient
+              measures[measure.field] = 65 + (x * 2) + (y * 1.5) + noise;
+            } else if (measure.field === 'outdoor_humidity') {
+              // Humidity inverse gradient
+              measures[measure.field] = 80 - (x * 3) - (y * 2) + noise;
             } else {
-              dimensions[dim.field] = `Value ${i + 1}`;
+              // General pattern
+              measures[measure.field] = Math.max(0, baseValue + waveX + waveY + noise);
             }
-            break;
-          case 'text':
-            dimensions[dim.field] = `Text Value ${i + 1}`;
-            break;
-          case 'date':
-          case 'timestamp':
-            const date = new Date();
-            date.setDate(date.getDate() - i);
-            dimensions[dim.field] = date.toISOString().split('T')[0];
-            break;
-          default:
-            dimensions[dim.field] = `Value ${i + 1}`;
+          });
+          
+          // Add metadata
+          metadata.observation_id = `obs-${x}-${y}`;
+          metadata.x_position = x;
+          metadata.y_position = y;
+          metadata.placement = xCategories[x];
+          metadata.day_of_phase = y + 1;
+          
+          sampleData.push({ dimensions, measures, metadata });
         }
-      });
-
-      // Generate sample measure data with realistic values
-      config.measures.forEach(measure => {
-        if (measure.field === 'outdoor_temperature') {
-          // Generate realistic temperature values (60-90°F)
-          measures[measure.field] = Math.floor(Math.random() * 30) + 60;
-        } else if (measure.field === 'outdoor_humidity') {
-          // Generate realistic humidity values (40-80%)
-          measures[measure.field] = Math.floor(Math.random() * 40) + 40;
-        } else {
-          // General numeric values
-          measures[measure.field] = Math.floor(Math.random() * 100) + 1;
-        }
-      });
-
-      // Generate sample metadata for drill-down functionality with realistic UUIDs
-      const generateUUID = (prefix: string, index: number) => {
-        const baseUUID = '00000000-0000-4000-8000-000000000000';
-        const hexIndex = index.toString(16).padStart(12, '0');
-        return `${prefix}${baseUUID.slice(prefix.length, 8)}-${baseUUID.slice(9, 13)}-${baseUUID.slice(14, 18)}-${baseUUID.slice(19, 23)}-${hexIndex}`;
-      };
-
-      metadata.observation_id = generateUUID('obs', i + 1);
-      metadata.submission_id = generateUUID('sub', i + 1);
-      metadata.site_id = generateUUID('sit', i + 1);
-      metadata.program_id = generateUUID('prg', i + 1);
-      metadata.petri_code = `PETRI_${String(i + 1).padStart(3, '0')}`;
-      metadata.created_at = new Date(Date.now() - i * 86400000).toISOString();
-      metadata.placement = ['P1', 'P2', 'P3', 'P4', 'P5', 'S1', 'R1'][i % 7];
-      metadata.fungicide_used = i % 2 === 0 ? 'Yes' : 'No';
-      metadata.petri_growth_stage = ['None', 'Trace', 'Low', 'Moderate', 'High'][i % 5];
-      
-      // Add sample image URLs (mix of valid and null for testing)
-      if (i % 3 === 0) {
-        metadata.image_url = `https://example.com/petri-images/sample-${i + 1}.jpg`;
-      } else if (i % 5 === 0) {
-        metadata.image_url = null; // Test null image case
-      } else {
-        metadata.image_url = `https://picsum.photos/800/600?random=${i + 1}`; // Placeholder images for demo
       }
+    } else if (config.chartType === 'box_plot') {
+      // Generate box plot data with realistic distributions for each group
+      const groups = ['Control', 'Treatment A', 'Treatment B', 'Treatment C', 'Treatment D'];
+      const samplesPerGroup = 50; // Good sample size for statistical analysis
       
-      // Add sample related data (program name, site name, global submission ID)
-      const programNames = ['Seedling Phase 1', 'Growth Optimization Study', 'Environmental Impact Analysis', 'Yield Enhancement Program', 'Pest Resistance Trial'];
-      const siteNames = ['Greenhouse Alpha', 'Field Station Beta', 'Laboratory Gamma', 'Research Facility Delta', 'Test Site Epsilon'];
+      groups.forEach((group, groupIndex) => {
+        // Different distribution parameters for each group
+        const baseMean = 50 + (groupIndex * 8); // Groups have different means
+        const baseStdDev = 8 + (groupIndex * 0.5); // Slightly different variances
+        const skewness = groupIndex === 2 ? 0.8 : 0; // Treatment B is skewed
+        
+        for (let i = 0; i < samplesPerGroup; i++) {
+          const dimensions: Record<string, any> = {};
+          const measures: Record<string, any> = {};
+          const metadata: Record<string, any> = {};
+          
+          // Set group dimension
+          if (config.dimensions.length >= 1) {
+            dimensions[config.dimensions[0].field] = group;
+          }
+          
+          // Add secondary dimension if configured (e.g., time period)
+          if (config.dimensions.length >= 2) {
+            const timePeriods = ['Week 1', 'Week 2', 'Week 3', 'Week 4'];
+            dimensions[config.dimensions[1].field] = timePeriods[Math.floor(i / (samplesPerGroup / 4))];
+          }
+          
+          // Generate values with different distributions
+          config.measures.forEach(measure => {
+            let value: number;
+            
+            // Generate normally distributed data with Box-Muller transform
+            const u1 = Math.random();
+            const u2 = Math.random();
+            const z0 = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+            
+            // Apply skewness if needed
+            let skewedZ = z0;
+            if (skewness !== 0) {
+              // Simple skewness approximation
+              skewedZ = z0 + skewness * Math.pow(z0, 2) * Math.sign(z0);
+            }
+            
+            value = baseMean + skewedZ * baseStdDev;
+            
+            // Add some outliers (5% chance)
+            if (Math.random() < 0.05) {
+              value = Math.random() < 0.5 
+                ? baseMean - 3 * baseStdDev - Math.random() * baseStdDev
+                : baseMean + 3 * baseStdDev + Math.random() * baseStdDev;
+            }
+            
+            // Ensure reasonable bounds based on measure type
+            if (measure.field === 'growth_index' || measure.field === 'effectiveness_score') {
+              value = Math.max(0, Math.min(100, value));
+            } else if (measure.field === 'outdoor_temperature') {
+              value = Math.max(40, Math.min(100, 70 + value * 0.3));
+            } else if (measure.field === 'outdoor_humidity') {
+              value = Math.max(20, Math.min(100, 60 + value * 0.4));
+            }
+            
+            measures[measure.field] = value;
+          });
+          
+          // Add metadata
+          metadata.sample_id = `${group.replace(' ', '_').toLowerCase()}_${i + 1}`;
+          metadata.group = group;
+          metadata.group_index = groupIndex;
+          metadata.sample_index = i;
+          
+          sampleData.push({ dimensions, measures, metadata });
+        }
+      });
+    } else if (config.chartType === 'scatter') {
+      // Generate scatter plot data with realistic correlations
+      const sampleSize = 200; // More points for better scatter visualization
+      const groups = ['Group A', 'Group B', 'Group C', 'Group D'];
       
-      metadata.program_name = programNames[i % programNames.length];
-      metadata.site_name = siteNames[i % siteNames.length];
-      metadata.global_submission_id = 1100000 + i + 1; // Starting from 1100001
+      // Define correlation patterns for different groups
+      const correlationPatterns = [
+        { slope: 1.2, intercept: 10, noise: 15, correlation: 0.85 },   // Strong positive
+        { slope: -0.8, intercept: 80, noise: 20, correlation: -0.75 }, // Strong negative
+        { slope: 0.4, intercept: 40, noise: 30, correlation: 0.45 },   // Moderate positive
+        { slope: 0, intercept: 50, noise: 40, correlation: 0 }         // No correlation
+      ];
+      
+      for (let i = 0; i < sampleSize; i++) {
+        const dimensions: Record<string, any> = {};
+        const measures: Record<string, any> = {};
+        const metadata: Record<string, any> = {};
+        
+        // Assign to groups
+        const groupIndex = Math.floor(i / (sampleSize / groups.length));
+        const group = groups[groupIndex];
+        const pattern = correlationPatterns[groupIndex];
+        
+        // Set dimension (group)
+        if (config.dimensions.length >= 1) {
+          dimensions[config.dimensions[0].field] = group;
+        }
+        
+        // Generate correlated data points
+        const x = Math.random() * 100; // X value between 0-100
+        
+        // Y value based on correlation pattern
+        const baseY = pattern.slope * x + pattern.intercept;
+        const noise = (Math.random() - 0.5) * pattern.noise;
+        let y = baseY + noise;
+        
+        // Add some outliers (3% chance)
+        if (Math.random() < 0.03) {
+          y = Math.random() * 100; // Random outlier
+        }
+        
+        // Ensure Y is within reasonable bounds
+        y = Math.max(0, Math.min(100, y));
+        
+        // Set measures
+        if (config.measures.length >= 2) {
+          const xKey = config.measures[0].field;
+          const yKey = config.measures[1].field;
+          
+          // Map to specific measure types if known
+          if (xKey === 'outdoor_temperature' || xKey === 'indoor_temperature') {
+            measures[xKey] = 50 + x * 0.4; // Temperature 50-90°F
+          } else if (xKey === 'outdoor_humidity' || xKey === 'indoor_humidity') {
+            measures[xKey] = x; // Humidity 0-100%
+          } else {
+            measures[xKey] = x;
+          }
+          
+          if (yKey === 'growth_index' || yKey === 'effectiveness_score') {
+            measures[yKey] = y;
+          } else if (yKey === 'outdoor_temperature' || yKey === 'indoor_temperature') {
+            measures[yKey] = 50 + y * 0.4;
+          } else {
+            measures[yKey] = y;
+          }
+        }
+        
+        // Optional third measure for bubble size
+        if (config.measures.length >= 3) {
+          const sizeKey = config.measures[2].field;
+          // Size correlates somewhat with Y value
+          measures[sizeKey] = Math.max(5, y * 0.5 + (Math.random() - 0.5) * 20);
+        }
+        
+        // Add metadata
+        metadata.point_id = `point_${i + 1}`;
+        metadata.group = group;
+        metadata.group_index = groupIndex;
+        metadata.x_original = x;
+        metadata.y_original = y;
+        
+        sampleData.push({ dimensions, measures, metadata });
+      }
+    } else if (config.chartType === 'histogram') {
+      // Generate histogram data with various distributions
+      const sampleSize = 500; // Large sample for good histogram
+      const distributionType = Math.floor(Math.random() * 4); // Random distribution type
+      
+      for (let i = 0; i < sampleSize; i++) {
+        const dimensions: Record<string, any> = {};
+        const measures: Record<string, any> = {};
+        const metadata: Record<string, any> = {};
+        
+        // Set dimension if provided
+        if (config.dimensions.length >= 1) {
+          dimensions[config.dimensions[0].field] = 'All Data';
+        }
+        
+        // Generate values based on different distributions
+        config.measures.forEach(measure => {
+          let value: number;
+          
+          switch (distributionType) {
+            case 0: // Normal distribution
+              // Box-Muller transform for normal distribution
+              const u1 = Math.random();
+              const u2 = Math.random();
+              const z0 = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+              value = 50 + z0 * 15; // Mean=50, StdDev=15
+              break;
+              
+            case 1: // Skewed distribution (log-normal)
+              const normal = Math.sqrt(-2 * Math.log(Math.random())) * Math.cos(2 * Math.PI * Math.random());
+              value = Math.exp(3 + normal * 0.5) * 0.5; // Log-normal
+              break;
+              
+            case 2: // Bimodal distribution
+              if (Math.random() < 0.5) {
+                // First peak
+                const n1 = Math.sqrt(-2 * Math.log(Math.random())) * Math.cos(2 * Math.PI * Math.random());
+                value = 30 + n1 * 10;
+              } else {
+                // Second peak
+                const n2 = Math.sqrt(-2 * Math.log(Math.random())) * Math.cos(2 * Math.PI * Math.random());
+                value = 70 + n2 * 10;
+              }
+              break;
+              
+            case 3: // Uniform distribution with some outliers
+              value = Math.random() * 80 + 10; // Uniform between 10-90
+              // Add 5% outliers
+              if (Math.random() < 0.05) {
+                value = Math.random() < 0.5 ? Math.random() * 10 : 90 + Math.random() * 10;
+              }
+              break;
+              
+            default:
+              value = Math.random() * 100;
+          }
+          
+          // Ensure reasonable bounds based on measure type
+          if (measure.field === 'growth_index' || measure.field === 'effectiveness_score') {
+            value = Math.max(0, Math.min(100, value));
+          } else if (measure.field === 'outdoor_temperature' || measure.field === 'indoor_temperature') {
+            value = Math.max(40, Math.min(100, 50 + value * 0.4));
+          } else if (measure.field === 'outdoor_humidity' || measure.field === 'indoor_humidity') {
+            value = Math.max(20, Math.min(100, value));
+          }
+          
+          measures[measure.field] = value;
+        });
+        
+        // Add metadata
+        metadata.sample_id = `sample_${i + 1}`;
+        metadata.distribution_type = ['normal', 'skewed', 'bimodal', 'uniform'][distributionType];
+        
+        sampleData.push({ dimensions, measures, metadata });
+      }
+    } else {
+      // Original sample data generation for other chart types
+      const sampleSize = 20;
 
-      sampleData.push({ dimensions, measures, metadata });
+      for (let i = 0; i < sampleSize; i++) {
+        const dimensions: Record<string, any> = {};
+        const measures: Record<string, any> = {};
+        const metadata: Record<string, any> = {};
+
+        // Generate sample dimension data
+        config.dimensions.forEach(dim => {
+          switch (dim.dataType) {
+            case 'enum':
+              // Use actual enum values if available
+              if (dim.enumValues && dim.enumValues.length > 0) {
+                dimensions[dim.field] = dim.enumValues[i % dim.enumValues.length];
+              } else {
+                dimensions[dim.field] = `Value ${i + 1}`;
+              }
+              break;
+            case 'text':
+              dimensions[dim.field] = `Text Value ${i + 1}`;
+              break;
+            case 'date':
+            case 'timestamp':
+              const date = new Date();
+              date.setDate(date.getDate() - i);
+              dimensions[dim.field] = date.toISOString().split('T')[0];
+              break;
+            default:
+              dimensions[dim.field] = `Value ${i + 1}`;
+          }
+        });
+
+        // Generate sample measure data with realistic values
+        config.measures.forEach(measure => {
+          if (measure.field === 'outdoor_temperature') {
+            // Generate realistic temperature values (60-90°F)
+            measures[measure.field] = Math.floor(Math.random() * 30) + 60;
+          } else if (measure.field === 'outdoor_humidity') {
+            // Generate realistic humidity values (40-80%)
+            measures[measure.field] = Math.floor(Math.random() * 40) + 40;
+          } else {
+            // General numeric values
+            measures[measure.field] = Math.floor(Math.random() * 100) + 1;
+          }
+        });
+
+        // Generate sample metadata for drill-down functionality with realistic UUIDs
+        const generateUUID = (prefix: string, index: number) => {
+          const baseUUID = '00000000-0000-4000-8000-000000000000';
+          const hexIndex = index.toString(16).padStart(12, '0');
+          return `${prefix}${baseUUID.slice(prefix.length, 8)}-${baseUUID.slice(9, 13)}-${baseUUID.slice(14, 18)}-${baseUUID.slice(19, 23)}-${hexIndex}`;
+        };
+
+        metadata.observation_id = generateUUID('obs', i + 1);
+        metadata.submission_id = generateUUID('sub', i + 1);
+        metadata.site_id = generateUUID('sit', i + 1);
+        metadata.program_id = generateUUID('prg', i + 1);
+        metadata.petri_code = `PETRI_${String(i + 1).padStart(3, '0')}`;
+        metadata.created_at = new Date(Date.now() - i * 86400000).toISOString();
+        metadata.placement = ['P1', 'P2', 'P3', 'P4', 'P5', 'S1', 'R1'][i % 7];
+        metadata.fungicide_used = i % 2 === 0 ? 'Yes' : 'No';
+        metadata.petri_growth_stage = ['None', 'Trace', 'Low', 'Moderate', 'High'][i % 5];
+        
+        // Add sample image URLs (mix of valid and null for testing)
+        if (i % 3 === 0) {
+          metadata.image_url = `https://example.com/petri-images/sample-${i + 1}.jpg`;
+        } else if (i % 5 === 0) {
+          metadata.image_url = null; // Test null image case
+        } else {
+          metadata.image_url = `https://picsum.photos/800/600?random=${i + 1}`; // Placeholder images for demo
+        }
+        
+        // Add sample related data (program name, site name, global submission ID)
+        const programNames = ['Seedling Phase 1', 'Growth Optimization Study', 'Environmental Impact Analysis', 'Yield Enhancement Program', 'Pest Resistance Trial'];
+        const siteNames = ['Greenhouse Alpha', 'Field Station Beta', 'Laboratory Gamma', 'Research Facility Delta', 'Test Site Epsilon'];
+        
+        metadata.program_name = programNames[i % programNames.length];
+        metadata.site_name = siteNames[i % siteNames.length];
+        metadata.global_submission_id = 1100000 + i + 1; // Starting from 1100001
+
+        sampleData.push({ dimensions, measures, metadata });
+      }
     }
 
     console.log('Generated sample data:', sampleData.slice(0, 2)); // Log first 2 rows
 
+    const totalCount = sampleData.length;
     return {
       data: sampleData,
-      totalCount: sampleSize,
-      filteredCount: sampleSize,
+      totalCount: totalCount,
+      filteredCount: totalCount,
       executionTime: 45,
       cacheHit: false,
       metadata: {

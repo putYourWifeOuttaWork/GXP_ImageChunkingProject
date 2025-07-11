@@ -78,9 +78,45 @@ export interface DataSource {
   name: string;
   table: string;
   alias?: string;
+  
+  // Primary vs Secondary designation
+  isPrimary?: boolean;
+  
+  // Selected fields configuration
+  selectedFields?: string[];
+  availableFields?: DataSourceField[];
+  
+  // Relationship configuration
+  relationships?: DataSourceRelationship[];
+  
+  // Legacy properties
   joins?: Join[];
   baseFilters?: Filter[];
   customQuery?: string;
+}
+
+// Field definition for data sources
+export interface DataSourceField {
+  name: string;
+  displayName: string;
+  dataType: DataType;
+  isSelected: boolean;
+  isPrimaryKey?: boolean;
+  isForeignKey?: boolean;
+  relatedTable?: string;
+  relatedField?: string;
+}
+
+// Relationship between data sources
+export interface DataSourceRelationship {
+  id: string;
+  fromSource: string;
+  toSource: string;
+  fromField: string;
+  toField: string;
+  cardinality: 'one-to-one' | 'one-to-many' | 'many-to-one' | 'many-to-many';
+  joinType: 'inner' | 'left' | 'right' | 'full';
+  isRequired: boolean;
 }
 
 export interface Join {

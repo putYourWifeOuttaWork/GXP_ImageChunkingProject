@@ -24,6 +24,8 @@ const Button = ({
   testId,
   ...props
 }: ButtonProps) => {
+  // Remove any 'loading' prop that might have been passed accidentally
+  const { loading, ...restProps } = props as any;
   const baseClasses = 'inline-flex items-center justify-center font-medium rounded-md focus:outline-none transition-colors';
   
   const variantClasses = {
@@ -56,7 +58,7 @@ const Button = ({
       className={buttonClasses}
       disabled={isLoading || disabled}
       data-testid={testId}
-      {...props}
+      {...restProps}
     >
       {isLoading ? (
         <>

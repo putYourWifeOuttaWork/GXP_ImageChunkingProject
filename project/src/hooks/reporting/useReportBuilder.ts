@@ -563,6 +563,10 @@ export const useReportBuilder = (initialReportId?: string) => {
   const resetState = useCallback(() => {
     console.log('Debug: resetState called, clearing cache and resetting state');
     clearStateCache();
+    
+    // Use the centralized cache clearing method
+    ReportingDataService.clearAllCaches();
+    
     dispatch({ type: 'RESET_STATE' });
     console.log('Debug: resetState completed');
   }, []);
@@ -659,6 +663,13 @@ export const useReportBuilder = (initialReportId?: string) => {
     
     dispatch({ type: 'SET_IS_LOADING', payload: true });
     
+    // Create a timeout promise that rejects after 10 seconds
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => {
+        reject(new Error('Query timeout: The query is taking too long. You may need to clear the cache.'));
+      }, 10000); // 10 second timeout
+    });
+    
     try {
       // Consolidate duplicate dimensions before creating report config
       const consolidatedDimensions = consolidateDimensions(state.dimensions);
@@ -692,13 +703,20 @@ export const useReportBuilder = (initialReportId?: string) => {
         tags: []
       };
 
-      // Execute report and get aggregated data
-      const previewData = await ReportingDataService.executeReport(reportConfig);
+      // Execute report with timeout - race between actual query and timeout
+      const executePromise = ReportingDataService.executeReport(reportConfig);
+      const previewData = await Promise.race([executePromise, timeoutPromise]);
       
       dispatch({ type: 'SET_PREVIEW_DATA', payload: previewData });
       return previewData;
     } catch (error) {
       console.error('Error generating preview:', error);
+      
+      // If it's a timeout error, provide specific guidance
+      if (error instanceof Error && error.message.includes('timeout')) {
+        alert(error.message + '\n\nClick Reset to clear the cache and try again.');
+      }
+      
       return null;
     } finally {
       dispatch({ type: 'SET_IS_LOADING', payload: false });

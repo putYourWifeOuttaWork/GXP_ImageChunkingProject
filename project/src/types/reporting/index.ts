@@ -5,3 +5,10 @@ export * from './visualizationTypes';
 export * from './filterTypes';
 export * from './dashboardTypes';
 export * from './permissionTypes';
+
+// Re-export specific types for convenience
+export type { 
+  DataSource, 
+  DataSourceField, 
+  DataSourceRelationship 
+} from './reportTypes';

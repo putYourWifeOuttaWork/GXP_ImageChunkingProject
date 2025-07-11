@@ -5,7 +5,12 @@ import { AggregatedData } from '../../../types/reporting';
 import { BarChart as D3BarChart } from '../visualizations/charts/BarChart';
 import { LineChart as D3LineChart } from '../visualizations/charts/LineChart';
 import { PieChart as D3PieChart } from '../visualizations/charts/PieChart';
+import { AreaChart as D3AreaChart } from '../visualizations/charts/AreaChart';
 import { GrowthProgressionChart } from '../visualizations/scientific/GrowthProgressionChart';
+import { HeatmapChart } from '../visualizations/charts/HeatmapChart';
+import { BoxPlot } from '../visualizations/charts/BoxPlot';
+import { ScatterPlot } from '../visualizations/charts/ScatterPlot';
+import { Histogram } from '../visualizations/charts/Histogram';
 
 interface PreviewPanelProps {
   previewData: AggregatedData | null;
@@ -133,6 +138,16 @@ export const PreviewPanel: React.FC<PreviewPanelProps> = ({
         return <D3LineChart {...chartProps} />;
       case 'pie':
         return <D3PieChart {...chartProps} />;
+      case 'area':
+        return <D3AreaChart {...chartProps} />;
+      case 'scatter':
+        return <ScatterPlot {...chartProps} />;
+      case 'box_plot':
+        return <BoxPlot {...chartProps} />;
+      case 'histogram':
+        return <Histogram {...chartProps} />;
+      case 'heatmap':
+        return <HeatmapChart {...chartProps} />;
       case 'growth_progression':
         return <GrowthProgressionChart {...chartProps} />;
       default:
@@ -264,7 +279,21 @@ export const PreviewPanel: React.FC<PreviewPanelProps> = ({
                     <tr key={index} className={index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
                       {reportConfig.dimensions.map((dim: any) => (
                         <td key={dim.id} className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {row.dimensions[dim.field] || '-'}
+                          {(() => {
+                            const value = row.dimensions[dim.field];
+                            if (!value) return '-';
+                            
+                            // Check if it's a date and format it
+                            if (typeof value === 'string' && value.match(/^\d{4}-\d{2}-\d{2}/)) {
+                              const date = new Date(value);
+                              const month = date.getMonth() + 1;
+                              const day = date.getDate();
+                              const year = date.getFullYear().toString().slice(-2);
+                              return `${month}/${day}/${year}`;
+                            }
+                            
+                            return value;
+                          })()}
                         </td>
                       ))}
                       {reportConfig.measures.map((measure: any) => (

@@ -58,8 +58,6 @@ export const DataViewer: React.FC<DataViewerProps> = ({
   const [imageModalVisible, setImageModalVisible] = useState(false);
   const [imageModalData, setImageModalData] = useState<any[]>([]);
 
-  if (!isVisible || !data.length) return null;
-
   // Helper function to construct drill-down URLs
   const constructDrillDownUrl = (row: DataPoint): string | null => {
     const { metadata } = row;
@@ -207,8 +205,25 @@ export const DataViewer: React.FC<DataViewerProps> = ({
   const formatValue = (value: any, dataType?: string) => {
     if (value == null) return '-';
     
-    if (dataType === 'timestamp' && value) {
-      return new Date(value).toLocaleString();
+    // Check if it's a date string (YYYY-MM-DD format)
+    if (typeof value === 'string' && value.match(/^\d{4}-\d{2}-\d{2}/)) {
+      const date = new Date(value);
+      const month = date.getMonth() + 1;
+      const day = date.getDate();
+      const year = date.getFullYear().toString().slice(-2);
+      
+      // If it includes time, show it
+      if (value.includes('T') || dataType === 'timestamp') {
+        const hours = date.getHours();
+        const minutes = date.getMinutes();
+        const ampm = hours >= 12 ? 'PM' : 'AM';
+        const displayHours = hours % 12 || 12;
+        const displayMinutes = minutes.toString().padStart(2, '0');
+        return `${month}/${day}/${year} ${displayHours}:${displayMinutes} ${ampm}`;
+      }
+      
+      // Otherwise just show the date
+      return `${month}/${day}/${year}`;
     }
     
     if (typeof value === 'number') {
@@ -280,6 +295,9 @@ export const DataViewer: React.FC<DataViewerProps> = ({
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, [isVisible, onClose]);
+  
+  // Early return after all hooks
+  if (!isVisible || !data.length) return null;
   
   return (
     <div 

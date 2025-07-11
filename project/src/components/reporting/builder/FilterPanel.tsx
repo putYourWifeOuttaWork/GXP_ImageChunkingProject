@@ -22,7 +22,7 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
   dataSources,
 }) => {
   const [showAddForm, setShowAddForm] = useState(false);
-  const [dynamicFilterFields, setDynamicFilterFields] = useState<Array<{ id: string; name: string; displayName: string; dataType: string; source: string; field: string }>>([]);
+  const [dynamicFilterFields, setDynamicFilterFields] = useState<Array<{ id: string; name: string; displayName: string; dataType: string; source: string; field: string; relationshipPath?: any[]; targetTable?: string; }>>([]);
   const [loadingFilterFields, setLoadingFilterFields] = useState(false);
   const [newFilter, setNewFilter] = useState({
     name: '',
@@ -125,6 +125,13 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
       filterValue = `${newFilter.startValue},${newFilter.endValue}`;
     }
 
+    // Find the selected field to get relationship information
+    const selectedField = dynamicFilterFields.find(f => 
+      f.field === newFilter.field && f.source === newFilter.dataSource &&
+      // Also match on target table if we're looking at a related field
+      (f.targetTable ? f.displayName === newFilter.label : true)
+    );
+
     const filter: FilterType = {
       id: `filter_${Date.now()}`,
       name: newFilter.name,
@@ -134,6 +141,11 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
       operator: newFilter.operator,
       value: filterValue,
       label: newFilter.label || newFilter.name,
+      // Add relationship information if it's a cross-table filter
+      ...(selectedField?.relationshipPath && {
+        relationshipPath: selectedField.relationshipPath,
+        targetTable: selectedField.targetTable
+      })
     };
 
     onAddFilter(filter);
@@ -221,44 +233,54 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
 
   // Organize dynamic filter fields by data source for the dropdown
   const getOrganizedFilterFields = () => {
-    const fieldsByDataSource: Record<string, Array<{ field: string; displayName: string; dataType: string; type: string }>> = {};
+    const fieldsByCategory: Record<string, Array<{ id: string; field: string; displayName: string; dataType: string; type: string }>> = {};
     
     dynamicFilterFields.forEach(field => {
-      const dataSource = dataSources.find(ds => ds.id === field.source);
-      if (dataSource) {
-        if (!fieldsByDataSource[dataSource.name]) {
-          fieldsByDataSource[dataSource.name] = [];
-        }
-        fieldsByDataSource[dataSource.name].push({
-          field: field.field,
-          displayName: field.displayName,
-          dataType: field.dataType,
-          type: 'column'
-        });
+      // Determine category based on whether it's a related field
+      let category: string;
+      if (field.targetTable) {
+        // Group related fields by their target table
+        const tableName = field.targetTable === 'pilot_programs' ? 'Programs' :
+                         field.targetTable === 'sites' ? 'Sites' :
+                         field.targetTable === 'submissions' ? 'Submissions' : field.targetTable;
+        category = `Related: ${tableName}`;
+      } else {
+        // Regular fields grouped by data source
+        const dataSource = dataSources.find(ds => ds.id === field.source);
+        category = dataSource ? dataSource.name : 'Other';
       }
+      
+      if (!fieldsByCategory[category]) {
+        fieldsByCategory[category] = [];
+      }
+      
+      fieldsByCategory[category].push({
+        id: field.id,
+        field: field.field,
+        displayName: field.displayName.replace(/ \(Related:.*\)/, ''), // Remove category from display name
+        dataType: field.dataType,
+        type: 'column'
+      });
     });
     
-    return fieldsByDataSource;
+    return fieldsByCategory;
   };
 
   const organizedFilterFields = getOrganizedFilterFields();
 
   // Update field selection logic for dynamic fields
   const handleDynamicFieldSelect = (fieldInfo: string) => {
-    const [dataSourceName, fieldName] = fieldInfo.split('.');
-    const dataSource = dataSources.find(ds => ds.name === dataSourceName);
-    if (!dataSource) return;
-    
-    const field = dynamicFilterFields.find(f => f.source === dataSource.id && f.field === fieldName);
+    // Check if this is a related table field (contains table prefix like 'pilot_programs.start_date')
+    const field = dynamicFilterFields.find(f => f.id === fieldInfo);
     if (!field) return;
     
     setNewFilter(prev => ({
       ...prev,
-      field: fieldName,
-      dataSource: dataSource.id,
+      field: field.field,
+      dataSource: field.source,
       type: getFilterTypeForDataType(field.dataType),
-      name: prev.name || field.displayName.replace(` (${dataSource.name})`, ''),
-      label: prev.label || field.displayName.replace(` (${dataSource.name})`, '')
+      name: prev.name || field.displayName,
+      label: prev.label || field.displayName
     }));
   };
 
@@ -538,7 +560,7 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
                     Field * {loadingFilterFields && <span className="text-gray-500">(Loading...)</span>}
                   </label>
                   <select
-                    value={newFilter.field && newFilter.dataSource ? `${dataSources.find(ds => ds.id === newFilter.dataSource)?.name}.${newFilter.field}` : ''}
+                    value={dynamicFilterFields.find(f => f.field === newFilter.field && f.source === newFilter.dataSource)?.id || ''}
                     onChange={(e) => handleDynamicFieldSelect(e.target.value)}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                     disabled={loadingFilterFields || dynamicFilterFields.length === 0}
@@ -550,11 +572,11 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
                         ? 'No fields available' 
                         : 'Select any column to filter by...'}
                     </option>
-                    {Object.entries(organizedFilterFields).map(([dataSourceName, fields]) => (
-                      <optgroup key={dataSourceName} label={`${dataSourceName} (${fields.length} columns)`}>
+                    {Object.entries(organizedFilterFields).map(([categoryName, fields]) => (
+                      <optgroup key={categoryName} label={`${categoryName} (${fields.length} fields)`}>
                         {fields.map(field => (
-                          <option key={`${dataSourceName}.${field.field}`} value={`${dataSourceName}.${field.field}`}>
-                            {field.field} - {field.displayName.replace(` (${dataSourceName})`, '')}
+                          <option key={field.id} value={field.id}>
+                            {field.field} - {field.displayName}
                           </option>
                         ))}
                       </optgroup>

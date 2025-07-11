@@ -12,6 +12,7 @@ import { MeasurePanel } from '../components/reporting/builder/MeasurePanel';
 import { FilterPanel } from '../components/reporting/builder/FilterPanel';
 import { VisualizationPanel } from '../components/reporting/builder/VisualizationPanel';
 import { PreviewPanel } from '../components/reporting/builder/PreviewPanel';
+import { DatabaseConnectionTest } from '../components/reporting/builder/DatabaseConnectionTest';
 
 const ReportBuilderPage: React.FC = () => {
   const { reportId } = useParams<{ reportId?: string }>();
@@ -26,6 +27,7 @@ const ReportBuilderPage: React.FC = () => {
     state,
     setBasicInfo,
     addDataSource,
+    updateDataSource,
     removeDataSource,
     addDimension,
     removeDimension,
@@ -173,6 +175,7 @@ const ReportBuilderPage: React.FC = () => {
           <DataSourcePanel
             dataSources={state.dataSources}
             onAddDataSource={addDataSource}
+            onUpdateDataSource={updateDataSource}
             onRemoveDataSource={removeDataSource}
             onSelectDataSource={() => {}}
             selectedDataSource={state.selectedDataSource}
@@ -286,10 +289,10 @@ const ReportBuilderPage: React.FC = () => {
                 size="sm"
                 icon={<RotateCcw size={16} />}
                 onClick={handleReset}
-                disabled={isLoading}
-                className="text-red-600 border-red-300 hover:bg-red-50"
+                disabled={false}  // Always enabled to allow clearing stuck queries
+                className={isLoading ? "text-orange-600 border-orange-300 hover:bg-orange-50" : "text-red-600 border-red-300 hover:bg-red-50"}
               >
-                Reset
+                {isLoading ? 'Force Reset' : 'Reset'}
               </Button>
               
               <Button
@@ -297,9 +300,10 @@ const ReportBuilderPage: React.FC = () => {
                 size="sm"
                 icon={<Eye size={16} />}
                 onClick={handlePreview}
-                disabled={!state.isValid || isLoading}
+                disabled={!state.isValid}
+                isLoading={isLoading}
               >
-                Preview
+                {isLoading ? 'Loading...' : 'Preview'}
               </Button>
               
               <Button
@@ -333,6 +337,9 @@ const ReportBuilderPage: React.FC = () => {
 
           {/* Main Content */}
           <div className="lg:col-span-3 space-y-4">
+            {/* Database Connection Test (only show on data source step) */}
+            {state.activeStep === 1 && <DatabaseConnectionTest />}
+            
             {/* Duplicate Dimensions Notification */}
             {hasDuplicateDimensions && (
               <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
