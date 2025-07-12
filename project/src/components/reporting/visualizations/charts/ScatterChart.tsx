@@ -6,15 +6,17 @@ interface ScatterChartProps {
   data: AggregatedData;
   settings: VisualizationSettings;
   className?: string;
+  onDataSelect?: (data: any[], position: { x: number; y: number }, title: string) => void;
 }
 
-export const ScatterChart: React.FC<ScatterChartProps> = ({ data, settings, className }) => {
+export const ScatterChart: React.FC<ScatterChartProps> = ({ data, settings, className, onDataSelect }) => {
   return (
     <BaseChart
       data={data}
       settings={settings}
       chartType="scatter"
       className={className}
+      onDataSelect={onDataSelect}
     />
   );
 };

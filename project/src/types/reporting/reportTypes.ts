@@ -15,6 +15,7 @@ export type ChartType =
   | 'pie'
   | 'donut'
   | 'area'
+  | 'treemap'
   | 'growth_progression'
   | 'spatial_effectiveness'
   | 'phase_comparison'
@@ -47,6 +48,7 @@ export interface ReportConfiguration {
   measures: Measure[];
   filters: Filter[];
   sorting: SortConfig[];
+  segmentBy?: string[]; // Fields to segment data by for isolation filtering
   
   // Visualization configuration
   chartType: ChartType;
@@ -76,8 +78,12 @@ export interface ReportConfiguration {
 export interface DataSource {
   id: string;
   name: string;
+  description?: string;
   table: string;
+  schema?: string;
   alias?: string;
+  joinable?: boolean;
+  fields?: any[];
   
   // Primary vs Secondary designation
   isPrimary?: boolean;
@@ -88,6 +94,10 @@ export interface DataSource {
   
   // Relationship configuration
   relationships?: DataSourceRelationship[];
+  
+  // Partition optimization properties
+  isPartitioned?: boolean;
+  partitionKeys?: string[];
   
   // Legacy properties
   joins?: Join[];
@@ -382,3 +392,6 @@ export interface ReportExecutionContext {
   timezone?: string;
   locale?: string;
 }
+
+// Alias for backward compatibility
+export type ReportConfig = ReportConfiguration;

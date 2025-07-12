@@ -3,6 +3,7 @@ import { Plus, Filter, Calendar, Type, Hash, Search, Trash2 } from 'lucide-react
 import Button from '../../common/Button';
 import { Filter as FilterType, Dimension, Measure, DataSource } from '../../../types/reporting';
 import { ReportingDataService } from '../../../services/reportingDataService';
+import { SegmentBy } from './SegmentBy';
 
 interface FilterPanelProps {
   filters: FilterType[];
@@ -11,6 +12,8 @@ interface FilterPanelProps {
   dimensions: Dimension[];
   measures: Measure[];
   dataSources: DataSource[];
+  selectedSegments?: string[];
+  onSegmentChange?: (segments: string[]) => void;
 }
 
 export const FilterPanel: React.FC<FilterPanelProps> = ({
@@ -20,6 +23,8 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
   dimensions,
   measures,
   dataSources,
+  selectedSegments = [],
+  onSegmentChange = () => {},
 }) => {
   const [showAddForm, setShowAddForm] = useState(false);
   const [dynamicFilterFields, setDynamicFilterFields] = useState<Array<{ id: string; name: string; displayName: string; dataType: string; source: string; field: string; relationshipPath?: any[]; targetTable?: string; }>>([]);
@@ -435,6 +440,14 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
           Filters help you narrow down your data to focus on specific subsets. Add filters to refine your analysis.
         </p>
       </div>
+
+      {/* Segment By Section */}
+      <SegmentBy
+        dataSources={dataSources}
+        selectedSegments={selectedSegments}
+        onSegmentChange={onSegmentChange}
+        className="mb-6"
+      />
 
       {/* Applied Filters */}
       {filters.length > 0 && (

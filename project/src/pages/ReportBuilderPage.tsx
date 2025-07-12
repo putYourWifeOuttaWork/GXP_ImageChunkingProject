@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Plus, Save, Eye, Settings, Filter, BarChart3, ArrowLeft, AlertCircle, CheckCircle, RotateCcw } from 'lucide-react';
+import { Plus, Save, Eye, Settings, Filter, BarChart3, ArrowLeft, AlertCircle, CheckCircle, RotateCcw, Zap } from 'lucide-react';
 import Button from '../components/common/Button';
 import Card from '../components/common/Card';
 import { useReportBuilder } from '../hooks/reporting/useReportBuilder';
 import { useReport } from '../hooks/reporting/useReportData';
-import { ReportBuilderSteps } from '../components/reporting/builder/ReportBuilderSteps';
 import { DataSourcePanel } from '../components/reporting/builder/DataSourcePanel';
 import { DimensionPanel } from '../components/reporting/builder/DimensionPanel';
 import { MeasurePanel } from '../components/reporting/builder/MeasurePanel';
@@ -13,6 +12,7 @@ import { FilterPanel } from '../components/reporting/builder/FilterPanel';
 import { VisualizationPanel } from '../components/reporting/builder/VisualizationPanel';
 import { PreviewPanel } from '../components/reporting/builder/PreviewPanel';
 import { DatabaseConnectionTest } from '../components/reporting/builder/DatabaseConnectionTest';
+import { ConfigurationTrail } from '../components/reporting/builder/ConfigurationTrail';
 
 const ReportBuilderPage: React.FC = () => {
   const { reportId } = useParams<{ reportId?: string }>();
@@ -37,6 +37,7 @@ const ReportBuilderPage: React.FC = () => {
     removeFilter,
     setChartType,
     setActiveStep,
+    setSelectedSegments,
     save,
     generatePreview,
     getAvailableDimensions,
@@ -214,6 +215,8 @@ const ReportBuilderPage: React.FC = () => {
             dimensions={state.dimensions}
             measures={state.measures}
             dataSources={state.dataSources}
+            selectedSegments={state.selectedSegments}
+            onSegmentChange={setSelectedSegments}
           />
         );
       case 5:
@@ -323,15 +326,13 @@ const ReportBuilderPage: React.FC = () => {
 
       {/* Content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-          {/* Steps Sidebar */}
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+          {/* Configuration Trail */}
           <div className="lg:col-span-1">
-            <ReportBuilderSteps
-              steps={steps}
+            <ConfigurationTrail
+              state={state}
               currentStep={state.activeStep}
-              onStepChange={setActiveStep}
-              errors={state.errors}
-              warnings={state.warnings}
+              onStepClick={setActiveStep}
             />
           </div>
 

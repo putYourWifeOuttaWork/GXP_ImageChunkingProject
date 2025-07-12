@@ -95,6 +95,15 @@ export const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
       requirements: { minDimensions: 0, minMeasures: 1 },
       bestFor: 'Frequency analysis and distribution patterns',
     },
+    {
+      id: 'treemap',
+      name: 'TreeMap',
+      icon: <Grid size={24} />,
+      description: 'Show hierarchical data with time animation',
+      category: 'Advanced',
+      requirements: { minDimensions: 2, minMeasures: 1 },
+      bestFor: 'Hierarchical data visualization over time',
+    },
     
     // Scientific charts
     {

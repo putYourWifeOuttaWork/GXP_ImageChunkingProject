@@ -26,6 +26,7 @@ interface BaseChartProps {
   chartType: string;
   className?: string;
   onSeriesToggle?: (seriesId: string, visible: boolean) => void;
+  onDataSelect?: (data: any[], position: { x: number; y: number }, title: string) => void;
 }
 
 // Helper function to detect if a field contains date data
@@ -161,7 +162,8 @@ export const BaseChart: React.FC<BaseChartProps> = ({
   settings,
   chartType,
   className = '',
-  onSeriesToggle
+  onSeriesToggle,
+  onDataSelect
 }) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -210,13 +212,19 @@ export const BaseChart: React.FC<BaseChartProps> = ({
 
   // Handle opening DataViewer
   const openDataViewer = useCallback((points: any[], position: { x: number; y: number }, title: string) => {
-    setDataViewer({
-      isVisible: true,
-      data: points,
-      position: { x: position.x, y: position.y },
-      title
-    });
-  }, []);
+    if (onDataSelect) {
+      // Use external callback if provided (from PreviewPanel)
+      onDataSelect(points, position, title);
+    } else {
+      // Fallback to internal modal
+      setDataViewer({
+        isVisible: true,
+        data: points,
+        position: { x: position.x, y: position.y },
+        title
+      });
+    }
+  }, [onDataSelect]);
 
   // Handle closing DataViewer
   const closeDataViewer = useCallback(() => {
@@ -1238,19 +1246,639 @@ export const BaseChart: React.FC<BaseChartProps> = ({
     }
   }
 
+  // Spatial effectiveness map with geographic interpolation
+  function renderSpatialEffectivenessMap(g: any, data: any[], width: number, height: number, settings: VisualizationSettings, callbacks?: any) {
+    if (!data.length) return;
+
+    // Extract geographic data
+    const hasLatLng = data.every(d => d.dimensions.latitude !== undefined && d.dimensions.longitude !== undefined);
+    if (!hasLatLng) {
+      // Show message if no geographic data
+      g.append('text')
+        .attr('x', width / 2)
+        .attr('y', height / 2)
+        .attr('text-anchor', 'middle')
+        .style('font-size', '14px')
+        .style('fill', '#666')
+        .text('Geographic coordinates (latitude/longitude) required for spatial map');
+      return;
+    }
+
+    // Get measure for effectiveness (first measure)
+    const measureKey = Object.keys(data[0].measures)[0];
+    if (!measureKey) return;
+
+    // Extract coordinates and values
+    const points = data.map(d => ({
+      lat: +d.dimensions.latitude,
+      lng: +d.dimensions.longitude,
+      value: +d.measures[measureKey],
+      site: d.dimensions.site_name || d.dimensions.site_id || 'Unknown',
+      metadata: d
+    })).filter(p => !isNaN(p.lat) && !isNaN(p.lng) && !isNaN(p.value));
+
+    // Calculate bounds
+    const latExtent = d3.extent(points, d => d.lat) as [number, number];
+    const lngExtent = d3.extent(points, d => d.lng) as [number, number];
+    const valueExtent = d3.extent(points, d => d.value) as [number, number];
+
+    // Add padding to bounds
+    const latPadding = (latExtent[1] - latExtent[0]) * 0.1;
+    const lngPadding = (lngExtent[1] - lngExtent[0]) * 0.1;
+
+    // Create projection - using Albers USA for US data, or Mercator for general
+    const projection = d3.geoMercator()
+      .center([(lngExtent[0] + lngExtent[1]) / 2, (latExtent[0] + latExtent[1]) / 2])
+      .scale(calculateMapScale(latExtent, lngExtent, width, height))
+      .translate([width / 2, height / 2]);
+
+    // Create path generator
+    const path = d3.geoPath().projection(projection);
+
+    // Color scale for effectiveness
+    const colorScale = d3.scaleSequential()
+      .domain(valueExtent)
+      .interpolator(d3.interpolateRdYlGn); // Red (low) to Yellow to Green (high)
+
+    // Add base map features if available
+    const mapGroup = g.append('g').attr('class', 'map-base');
+    
+    // Add state/region boundaries (placeholder - would need GeoJSON data)
+    mapGroup.append('rect')
+      .attr('width', width)
+      .attr('height', height)
+      .attr('fill', '#f0f0f0')
+      .attr('stroke', '#ccc');
+
+    // Create interpolation grid using inverse distance weighting (IDW)
+    const gridSize = 50; // Resolution of interpolation
+    const heatmapData = [];
+    
+    for (let i = 0; i < gridSize; i++) {
+      for (let j = 0; j < gridSize; j++) {
+        const x = (i / gridSize) * width;
+        const y = (j / gridSize) * height;
+        
+        // Convert screen coordinates back to lat/lng
+        const [lng, lat] = projection.invert!([x, y]);
+        
+        // Check if point is within bounds
+        if (lat >= latExtent[0] - latPadding && lat <= latExtent[1] + latPadding &&
+            lng >= lngExtent[0] - lngPadding && lng <= lngExtent[1] + lngPadding) {
+          
+          // Inverse distance weighting interpolation
+          let sumWeights = 0;
+          let sumValues = 0;
+          
+          points.forEach(point => {
+            const pointScreen = projection([point.lng, point.lat]);
+            const distance = Math.sqrt(
+              Math.pow(x - pointScreen![0], 2) + 
+              Math.pow(y - pointScreen![1], 2)
+            );
+            
+            // IDW with power parameter of 2
+            const weight = distance === 0 ? 1e10 : 1 / Math.pow(distance, 2);
+            sumWeights += weight;
+            sumValues += weight * point.value;
+          });
+          
+          const interpolatedValue = sumValues / sumWeights;
+          heatmapData.push({ x, y, value: interpolatedValue });
+        }
+      }
+    }
+
+    // Draw heatmap
+    const cellSize = width / gridSize;
+    g.selectAll('.heat-cell')
+      .data(heatmapData)
+      .enter()
+      .append('rect')
+      .attr('class', 'heat-cell')
+      .attr('x', d => d.x - cellSize / 2)
+      .attr('y', d => d.y - cellSize / 2)
+      .attr('width', cellSize)
+      .attr('height', cellSize)
+      .attr('fill', d => colorScale(d.value))
+      .attr('fill-opacity', 0.6);
+
+    // Add contour lines
+    const thresholds = d3.range(valueExtent[0], valueExtent[1], (valueExtent[1] - valueExtent[0]) / 10);
+    const contourGroup = g.append('g').attr('class', 'contours');
+    
+    // Simple contour lines based on thresholds
+    thresholds.forEach(threshold => {
+      const contourPath = d3.geoPath();
+      contourGroup.append('path')
+        .attr('d', '') // Would need proper contour algorithm
+        .attr('fill', 'none')
+        .attr('stroke', '#333')
+        .attr('stroke-width', 0.5)
+        .attr('stroke-opacity', 0.3);
+    });
+
+    // Add site markers
+    const siteGroup = g.append('g').attr('class', 'sites');
+    
+    const sites = siteGroup.selectAll('.site')
+      .data(points)
+      .enter()
+      .append('g')
+      .attr('class', 'site')
+      .attr('transform', d => {
+        const coords = projection([d.lng, d.lat]);
+        return `translate(${coords![0]}, ${coords![1]})`;
+      })
+      .style('cursor', 'pointer');
+
+    // Add circles for sites
+    sites.append('circle')
+      .attr('r', 8)
+      .attr('fill', d => colorScale(d.value))
+      .attr('stroke', '#333')
+      .attr('stroke-width', 2)
+      .attr('fill-opacity', 0.9);
+
+    // Add value labels
+    sites.append('text')
+      .attr('y', 4)
+      .attr('text-anchor', 'middle')
+      .style('font-size', '10px')
+      .style('font-weight', 'bold')
+      .style('fill', 'white')
+      .text(d => d.value.toFixed(1));
+
+    // Add legend
+    const legendWidth = 200;
+    const legendHeight = 20;
+    const legendGroup = g.append('g')
+      .attr('class', 'legend')
+      .attr('transform', `translate(${width - legendWidth - 20}, ${height - 40})`);
+
+    // Create gradient for legend
+    const gradientId = 'effectiveness-gradient';
+    const gradient = g.append('defs')
+      .append('linearGradient')
+      .attr('id', gradientId)
+      .attr('x1', '0%')
+      .attr('x2', '100%');
+
+    const numStops = 10;
+    for (let i = 0; i <= numStops; i++) {
+      const t = i / numStops;
+      gradient.append('stop')
+        .attr('offset', `${t * 100}%`)
+        .attr('stop-color', colorScale(valueExtent[0] + t * (valueExtent[1] - valueExtent[0])));
+    }
+
+    legendGroup.append('rect')
+      .attr('width', legendWidth)
+      .attr('height', legendHeight)
+      .attr('fill', `url(#${gradientId})`)
+      .attr('stroke', '#333');
+
+    legendGroup.append('text')
+      .attr('y', -5)
+      .style('font-size', '12px')
+      .style('font-weight', 'bold')
+      .text(`${measureKey} Effectiveness`);
+
+    legendGroup.append('text')
+      .attr('y', legendHeight + 15)
+      .style('font-size', '11px')
+      .text(valueExtent[0].toFixed(1));
+
+    legendGroup.append('text')
+      .attr('x', legendWidth)
+      .attr('y', legendHeight + 15)
+      .attr('text-anchor', 'end')
+      .style('font-size', '11px')
+      .text(valueExtent[1].toFixed(1));
+
+    // Add time control if temporal data exists
+    const hasTime = data.some(d => d.dimensions.date || d.dimensions.created_at);
+    if (hasTime) {
+      const timeGroup = g.append('g')
+        .attr('class', 'time-control')
+        .attr('transform', `translate(20, ${height - 40})`);
+
+      timeGroup.append('text')
+        .style('font-size', '12px')
+        .style('font-weight', 'bold')
+        .text('Time: [Animation controls would go here]');
+    }
+
+    // Interactive features
+    if (callbacks) {
+      sites
+        .on('mouseover', function(event: any, d: any) {
+          d3.select(this).select('circle')
+            .attr('r', 12)
+            .attr('fill-opacity', 1);
+
+          const tooltip = g.append('g')
+            .attr('class', 'map-tooltip');
+
+          const coords = projection([d.lng, d.lat]);
+          const tooltipX = coords![0] + 15;
+          const tooltipY = coords![1] - 15;
+
+          const tooltipBg = tooltip.append('rect')
+            .attr('x', tooltipX)
+            .attr('y', tooltipY - 60)
+            .attr('width', 150)
+            .attr('height', 60)
+            .attr('fill', 'white')
+            .attr('stroke', '#333')
+            .attr('stroke-width', 1)
+            .attr('rx', 3);
+
+          const lines = [
+            `Site: ${d.site}`,
+            `Lat: ${d.lat.toFixed(4)}`,
+            `Lng: ${d.lng.toFixed(4)}`,
+            `${measureKey}: ${d.value.toFixed(2)}`
+          ];
+
+          lines.forEach((line, i) => {
+            tooltip.append('text')
+              .attr('x', tooltipX + 5)
+              .attr('y', tooltipY - 45 + i * 15)
+              .style('font-size', '11px')
+              .text(line);
+          });
+        })
+        .on('mouseout', function() {
+          d3.select(this).select('circle')
+            .attr('r', 8)
+            .attr('fill-opacity', 0.9);
+          g.selectAll('.map-tooltip').remove();
+        })
+        .on('click', function(event: any, d: any) {
+          if (callbacks.onPointClick) {
+            const detailedData = data.filter(item => 
+              item.dimensions.latitude === d.lat && 
+              item.dimensions.longitude === d.lng
+            );
+            
+            const rect = this.getBoundingClientRect();
+            callbacks.onPointClick(detailedData, { x: rect.left, y: rect.top }, 
+              `Site: ${d.site} - Effectiveness Analysis`);
+          }
+        });
+    }
+
+    // Helper function to calculate appropriate map scale
+    function calculateMapScale(latExtent: [number, number], lngExtent: [number, number], width: number, height: number): number {
+      const latRange = latExtent[1] - latExtent[0];
+      const lngRange = lngExtent[1] - lngExtent[0];
+      
+      // Rough approximation for Mercator projection
+      const latScale = height / latRange * 2;
+      const lngScale = width / lngRange * 2;
+      
+      return Math.min(latScale, lngScale) * 0.8; // 80% to add padding
+    }
+  }
+
+  // Render animated treemap
+  function renderTreeMap(g: any, data: any[], width: number, height: number, settings: VisualizationSettings, callbacks?: any) {
+    if (!data.length) return;
+
+    // Get dimensions and measures
+    const dimKeys = Object.keys(data[0].dimensions);
+    const measureKeys = Object.keys(data[0].measures);
+    
+    if (dimKeys.length < 2 || measureKeys.length < 1) {
+      console.warn('TreeMap requires at least 2 dimensions (hierarchy levels and time) and 1 measure');
+      return;
+    }
+
+    // Identify time dimension (last dimension) and hierarchy dimensions
+    const timeDim = dimKeys[dimKeys.length - 1];
+    const hierarchyDims = dimKeys.slice(0, -1);
+    const measure = measureKeys[0];
+
+    // Get unique time values
+    let timeValues = [...new Set(data.map(d => d.dimensions[timeDim]))];
+    
+    // Sort time values if they are dates
+    const isTimeDate = timeValues.length > 0 && isDateField(timeValues[0]);
+    if (isTimeDate) {
+      timeValues = timeValues.sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+    }
+
+    // Create time control container
+    const controlHeight = 60;
+    const chartHeight = height - controlHeight;
+    
+    // Animation state
+    let currentTimeIndex = 0;
+    let animationInterval: any = null;
+    let isPlaying = false;
+
+    // Create main visualization group
+    const mainGroup = g.append('g')
+      .attr('class', 'treemap-main');
+
+    // Create controls group
+    const controlsGroup = g.append('g')
+      .attr('class', 'treemap-controls')
+      .attr('transform', `translate(0, ${chartHeight + 10})`);
+
+    // Build hierarchical data for a specific time
+    function buildHierarchy(timeValue: any) {
+      // Filter data for current time
+      const timeData = data.filter(d => d.dimensions[timeDim] === timeValue);
+      
+      // Build nested structure
+      const root: any = {
+        name: 'root',
+        children: []
+      };
+
+      // Group data by hierarchy levels
+      const grouped = d3.group(timeData, ...hierarchyDims.map(dim => (d: any) => d.dimensions[dim]));
+      
+      // Convert to hierarchical structure
+      function processGroup(group: any, level: number = 0): any {
+        if (level === hierarchyDims.length) {
+          // Leaf level - aggregate measures
+          const values = Array.isArray(group) ? group : [group];
+          return {
+            name: 'leaf',
+            value: d3.sum(values, (d: any) => +d.measures[measure] || 0)
+          };
+        }
+        
+        const children: any[] = [];
+        group.forEach((subGroup: any, key: string) => {
+          const child = processGroup(subGroup, level + 1);
+          if (Array.isArray(child)) {
+            children.push({
+              name: key,
+              children: child
+            });
+          } else {
+            children.push({
+              name: key,
+              ...child
+            });
+          }
+        });
+        
+        return children;
+      }
+
+      root.children = processGroup(grouped, 0);
+      return d3.hierarchy(root)
+        .sum((d: any) => d.value || 0)
+        .sort((a: any, b: any) => (b.value || 0) - (a.value || 0));
+    }
+
+    // Color scale
+    const colorScale = d3.scaleOrdinal(d3.schemeCategory10);
+
+    // Create treemap layout
+    const treemapLayout = d3.treemap()
+      .size([width, chartHeight])
+      .padding(2)
+      .round(true);
+
+    // Track cells for smooth transitions
+    let currentCells: d3.Selection<any, any, any, any> | null = null;
+
+    // Render treemap for specific time
+    function renderTime(timeIndex: number) {
+      const timeValue = timeValues[timeIndex];
+      const hierarchy = buildHierarchy(timeValue);
+      
+      treemapLayout(hierarchy);
+
+      // Use a key function to track cells by their path
+      const leafData = hierarchy.leaves();
+      const keyFn = (d: any) => {
+        const path = d.ancestors().reverse().slice(1).map((n: any) => n.data.name);
+        return path.join('|');
+      };
+
+      // Join data with existing cells
+      const cells = mainGroup.selectAll('.cell')
+        .data(leafData, keyFn);
+
+      // Exit - remove cells that no longer exist
+      cells.exit()
+        .transition()
+        .duration(750)
+        .style('opacity', 0)
+        .remove();
+
+      // Enter - create new cells
+      const cellsEnter = cells.enter()
+        .append('g')
+        .attr('class', 'cell')
+        .style('opacity', 0);
+
+      // Add rectangles to new cells
+      cellsEnter.append('rect')
+        .attr('fill', (d: any) => {
+          const topCategory = d.ancestors().reverse()[1]?.data.name || 'root';
+          return colorScale(topCategory);
+        })
+        .attr('stroke', '#fff')
+        .attr('stroke-width', 1);
+
+      // Add labels to new cells
+      cellsEnter.append('text')
+        .attr('class', 'cell-label')
+        .attr('x', 4)
+        .attr('y', 20)
+        .style('font-size', '12px')
+        .style('font-weight', 'bold');
+
+      // Add value labels to new cells
+      cellsEnter.append('text')
+        .attr('class', 'cell-value')
+        .attr('x', 4)
+        .attr('y', 35)
+        .style('font-size', '11px');
+
+      // Merge enter and update selections
+      const cellsMerge = cellsEnter.merge(cells);
+
+      // Update all cells (both new and existing) with smooth transitions
+      cellsMerge.transition()
+        .duration(750)
+        .style('opacity', 1)
+        .attr('transform', (d: any) => `translate(${d.x0},${d.y0})`);
+
+      // Update rectangles
+      cellsMerge.select('rect')
+        .transition()
+        .duration(750)
+        .attr('width', (d: any) => d.x1 - d.x0)
+        .attr('height', (d: any) => d.y1 - d.y0);
+
+      // Update labels
+      cellsMerge.select('.cell-label')
+        .text((d: any) => {
+          const path = d.ancestors().reverse().slice(1).map((n: any) => n.data.name);
+          return path[path.length - 1] || '';
+        });
+
+      // Update value labels
+      cellsMerge.select('.cell-value')
+        .text((d: any) => formatMeasureValue(d.value));
+
+      // Update time display
+      controlsGroup.select('.time-display')
+        .text(isTimeDate ? formatDateForDisplay(new Date(timeValue)) : timeValue);
+
+      // Update slider position
+      controlsGroup.select('.time-slider')
+        .property('value', timeIndex);
+
+      // Interactive features - apply to merged selection
+      if (callbacks) {
+        cellsMerge
+          .style('cursor', 'pointer')
+          .on('mouseover', function(event: any, d: any) {
+            d3.select(this).select('rect')
+              .transition()
+              .duration(100)
+              .attr('stroke', '#333')
+              .attr('stroke-width', 2);
+          })
+          .on('mouseout', function() {
+            d3.select(this).select('rect')
+              .transition()
+              .duration(100)
+              .attr('stroke', '#fff')
+              .attr('stroke-width', 1);
+          })
+          .on('click', function(event: any, d: any) {
+            if (callbacks.onPointClick) {
+              const path = d.ancestors().reverse().slice(1).map((n: any) => n.data.name);
+              const leafData = data.filter(item => 
+                hierarchyDims.every((dim, i) => item.dimensions[dim] === path[i]) &&
+                item.dimensions[timeDim] === timeValue
+              );
+              
+              const rect = this.getBoundingClientRect();
+              callbacks.onPointClick(leafData, { x: rect.left, y: rect.top }, 
+                `${path.join(' > ')} at ${timeValue}`);
+            }
+          });
+      }
+    }
+
+    // Create controls
+    const buttonSize = 30;
+    const sliderWidth = width - 200;
+
+    // Play/Pause button
+    const playButton = controlsGroup.append('g')
+      .attr('class', 'play-button')
+      .style('cursor', 'pointer');
+
+    playButton.append('rect')
+      .attr('width', buttonSize)
+      .attr('height', buttonSize)
+      .attr('rx', 5)
+      .attr('fill', '#f0f0f0')
+      .attr('stroke', '#333');
+
+    const playIcon = playButton.append('text')
+      .attr('x', buttonSize / 2)
+      .attr('y', buttonSize / 2)
+      .attr('text-anchor', 'middle')
+      .attr('dominant-baseline', 'middle')
+      .style('font-size', '16px')
+      .text('▶');
+
+    // Time slider
+    const sliderGroup = controlsGroup.append('g')
+      .attr('transform', `translate(${buttonSize + 20}, 5)`);
+
+    // Slider background
+    sliderGroup.append('rect')
+      .attr('width', sliderWidth)
+      .attr('height', 20)
+      .attr('rx', 10)
+      .attr('fill', '#e0e0e0');
+
+    // Create foreign object for HTML range input
+    const sliderForeign = sliderGroup.append('foreignObject')
+      .attr('width', sliderWidth)
+      .attr('height', 20);
+
+    const sliderInput = sliderForeign.append('xhtml:input')
+      .attr('type', 'range')
+      .attr('class', 'time-slider')
+      .attr('min', 0)
+      .attr('max', timeValues.length - 1)
+      .attr('value', 0)
+      .style('width', `${sliderWidth}px`)
+      .style('margin', '0')
+      .on('input', function() {
+        currentTimeIndex = +this.value;
+        renderTime(currentTimeIndex);
+      });
+
+    // Time display
+    controlsGroup.append('text')
+      .attr('class', 'time-display')
+      .attr('x', width - 100)
+      .attr('y', 20)
+      .style('font-size', '14px')
+      .style('font-weight', 'bold')
+      .text(timeValues[0]);
+
+    // Play/pause functionality
+    playButton.on('click', function() {
+      isPlaying = !isPlaying;
+      playIcon.text(isPlaying ? '❚❚' : '▶');
+      
+      if (isPlaying) {
+        animationInterval = setInterval(() => {
+          currentTimeIndex = (currentTimeIndex + 1) % timeValues.length;
+          renderTime(currentTimeIndex);
+        }, 1000); // 1 second per frame
+      } else {
+        clearInterval(animationInterval);
+      }
+    });
+
+    // Initial render
+    renderTime(0);
+
+    // Cleanup on unmount
+    return () => {
+      if (animationInterval) {
+        clearInterval(animationInterval);
+      }
+    };
+  }
+
   useEffect(() => {
     if (!svgRef.current || !data?.data?.length || !seriesData.length) return;
 
     const svg = d3.select(svgRef.current);
     svg.selectAll('*').remove();
 
-    // Adjust margins based on legend position
+    // Adjust margins based on legend position and chart type
     const legendPosition = settings.legends?.position || 'top';
+    
+    // Dynamic bottom margin based on chart type
+    const isBarChart = chartType === 'bar';
+    const baseBottomMargin = isBarChart ? 80 : 40;
+    
     const margin = legendPosition === 'top' 
-      ? { top: 60, right: 30, bottom: 40, left: 50 }
+      ? { top: 40, right: 20, bottom: baseBottomMargin, left: 60 }
       : legendPosition === 'bottom'
-      ? { top: 20, right: 30, bottom: 80, left: 50 }
-      : { top: 20, right: 120, bottom: 40, left: 50 };
+      ? { top: 20, right: 20, bottom: baseBottomMargin + 40, left: 60 }
+      : { top: 20, right: 120, bottom: baseBottomMargin, left: 60 };
     const width = settings.dimensions.width - margin.left - margin.right;
     const height = settings.dimensions.height - margin.top - margin.bottom;
 
@@ -1290,6 +1918,12 @@ export const BaseChart: React.FC<BaseChartProps> = ({
         break;
       case 'histogram':
         renderHistogram(g, data.data, width, height, settings, chartCallbacks);
+        break;
+      case 'treemap':
+        renderTreeMap(g, data.data, width, height, settings, chartCallbacks);
+        break;
+      case 'spatial_effectiveness':
+        renderSpatialEffectivenessMap(g, data.data, width, height, settings, chartCallbacks);
         break;
       default:
         renderMultiSeriesLineChart(g, seriesData, width, height, settings, chartCallbacks);
@@ -1356,14 +1990,441 @@ export const BaseChart: React.FC<BaseChartProps> = ({
   );
 };
 
+// Helper function to render empty state message
+function renderEmptyState(g: any, width: number, height: number, title: string, subtitle?: string) {
+  const messageGroup = g.append('g')
+    .attr('transform', `translate(${width / 2}, ${height / 2})`);
+  
+  // Background circle
+  messageGroup.append('circle')
+    .attr('r', 60)
+    .attr('fill', '#f9fafb')
+    .attr('stroke', '#e5e7eb')
+    .attr('stroke-width', 2);
+  
+  // Icon background
+  messageGroup.append('circle')
+    .attr('cy', -15)
+    .attr('r', 25)
+    .attr('fill', '#eff6ff');
+  
+  // Bar chart icon using paths
+  const iconGroup = messageGroup.append('g')
+    .attr('transform', 'translate(-12, -27)');
+  
+  iconGroup.append('rect')
+    .attr('x', 0)
+    .attr('y', 12)
+    .attr('width', 6)
+    .attr('height', 12)
+    .attr('fill', '#3b82f6');
+  
+  iconGroup.append('rect')
+    .attr('x', 9)
+    .attr('y', 6)
+    .attr('width', 6)
+    .attr('height', 18)
+    .attr('fill', '#3b82f6');
+  
+  iconGroup.append('rect')
+    .attr('x', 18)
+    .attr('y', 0)
+    .attr('width', 6)
+    .attr('height', 24)
+    .attr('fill', '#3b82f6');
+  
+  // Main message
+  messageGroup.append('text')
+    .attr('y', 20)
+    .attr('text-anchor', 'middle')
+    .style('font-size', '16px')
+    .style('font-weight', '600')
+    .style('fill', '#374151')
+    .text(title);
+  
+  // Subtitle if provided
+  if (subtitle) {
+    messageGroup.append('text')
+      .attr('y', 40)
+      .attr('text-anchor', 'middle')
+      .style('font-size', '14px')
+      .style('fill', '#6b7280')
+      .text(subtitle);
+  }
+  
+  // Additional help text for zero values
+  const hasZeroValues = g.node()?.__data__?.some((d: any) => 
+    Object.values(d.measures || {}).some((v: any) => +v === 0)
+  );
+  
+  if (hasZeroValues) {
+    messageGroup.append('text')
+      .attr('y', 60)
+      .attr('text-anchor', 'middle')
+      .style('font-size', '12px')
+      .style('fill', '#9ca3af')
+      .text('Tip: Some values may be zero');
+  }
+}
+
 function renderBarChart(g: any, data: any[], width: number, height: number, settings: VisualizationSettings, callbacks?: any) {
-  if (!data.length) return;
+  if (!data.length) {
+    renderEmptyState(g, width, height, 'No data available', 'Check your filters and data source configuration');
+    return;
+  }
 
   // Get the first dimension and measure for basic bar chart
   const firstDimKey = Object.keys(data[0].dimensions)[0];
   const firstMeasureKey = Object.keys(data[0].measures)[0];
 
   if (!firstDimKey || !firstMeasureKey) return;
+  
+  // Create composite keys if we have multiple dimensions (including segments)
+  const allDimKeys = Object.keys(data[0].dimensions);
+  const hasMultipleDimensions = allDimKeys.length > 1;
+  
+  // If we have multiple dimensions, render as grouped bar chart inline
+  if (hasMultipleDimensions) {
+    // Inline grouped bar chart implementation
+    const dimensionKeys = Object.keys(data[0].dimensions);
+    const firstMeasureKey = Object.keys(data[0].measures)[0];
+    
+    if (!dimensionKeys.length || !firstMeasureKey) return;
+
+    // The first dimension will be our X-axis grouping
+    const xDimKey = dimensionKeys[0];
+    const groupDimKeys = dimensionKeys.slice(1);
+    
+    // Get unique values for x-axis - clean up IDs and show human-readable names
+    const xValues = [...new Set(data.map(d => {
+      const value = d.dimensions[xDimKey];
+      // For any field with "(ID: xxx)", extract just the name part
+      if (value && value.includes('(ID:')) {
+        return value.split('(ID:')[0].trim();
+      }
+      return value;
+    }))].filter(v => v);
+    
+    // Get unique values for grouping - coalesce sites by name
+    const groupValues = [...new Set(data.map(d => 
+      groupDimKeys.map(key => {
+        const value = d.dimensions[key];
+        // For site_id fields, extract just the site name (before "(ID: xxx)")
+        if (key === 'site_id' && value && value.includes('(ID:')) {
+          return value.split('(ID:')[0].trim();
+        }
+        // For program_id, also clean up
+        if (key === 'program_id' && value && value.includes('(ID:')) {
+          return value.split('(ID:')[0].trim();
+        }
+        return value;
+      }).join(' | ')
+    ))].filter(v => v);
+
+    console.log('Grouped bar chart - X values:', xValues);
+    console.log('Grouped bar chart - Group values:', groupValues);
+    console.log('Grouped bar chart - Sample data point:', data[0]);
+
+    // Filter out rows with null values for the chart
+    const validData = data.filter(d => d.measures[firstMeasureKey] !== null && d.measures[firstMeasureKey] !== undefined);
+    
+    if (validData.length === 0) {
+      renderEmptyState(g, width, height, 'No valid data', 'All temperature readings are null');
+      return;
+    }
+
+    // Create scales
+    const x0Scale = d3.scaleBand()
+      .domain(xValues)
+      .range([0, width])
+      .paddingInner(0.1);
+
+    const x1Scale = d3.scaleBand()
+      .domain(groupValues)
+      .range([0, x0Scale.bandwidth()])
+      .padding(0.05);
+
+    // Find max value for Y scale from valid data only
+    const maxValue = d3.max(validData, d => +d.measures[firstMeasureKey]) || 0;
+    
+    const yScale = d3.scaleLinear()
+      .domain([0, maxValue * 1.1]) // Add 10% padding
+      .range([height, 0]);
+
+    // Create color scale
+    const colorScale = d3.scaleOrdinal()
+      .domain(groupValues)
+      .range(d3.schemeCategory10);
+
+    // Add axes
+    const xAxis = g.append('g')
+      .attr('transform', `translate(0,${height})`)
+      .call(d3.axisBottom(x0Scale));
+
+    // Format x-axis labels
+    xAxis.selectAll('text')
+      .style('text-anchor', 'end')
+      .attr('dx', '-.8em')
+      .attr('dy', '.15em')
+      .attr('transform', 'rotate(-45)')
+      .text((d: any) => {
+        const text = String(d);
+        // Clean up IDs and UUIDs from labels
+        if (text.includes('(ID:')) {
+          const cleaned = text.split('(ID:')[0].trim();
+          return cleaned.length > 20 ? cleaned.substring(0, 18) + '...' : cleaned;
+        }
+        return text.length > 20 ? text.substring(0, 18) + '...' : text;
+      });
+
+    g.append('g')
+      .call(d3.axisLeft(yScale));
+
+    // Create groups for each x value
+    const barGroups = g.selectAll('.bar-group')
+      .data(xValues)
+      .enter().append('g')
+      .attr('class', 'bar-group')
+      .attr('transform', d => {
+        const xPos = x0Scale(d);
+        return xPos !== undefined ? `translate(${xPos}, 0)` : 'translate(0, 0)';
+      });
+
+    // Add bars within each group
+    barGroups.each(function(xValue) {
+      const group = d3.select(this);
+      const groupData = validData.filter(d => {
+        const originalValue = d.dimensions[xDimKey];
+        // Clean the original value the same way we cleaned xValues
+        const cleanedValue = originalValue && originalValue.includes('(ID:') 
+          ? originalValue.split('(ID:')[0].trim() 
+          : originalValue;
+        return cleanedValue === xValue;
+      });
+      
+      group.selectAll('rect')
+        .data(groupData)
+        .enter().append('rect')
+        .attr('x', d => {
+          const groupKey = groupDimKeys.map(key => {
+            const value = d.dimensions[key];
+            // For site_id fields, extract just the site name (before "(ID: xxx)")
+            if (key === 'site_id' && value && value.includes('(ID:')) {
+              return value.split('(ID:')[0].trim();
+            }
+            // For program_id, also clean up
+            if (key === 'program_id' && value && value.includes('(ID:')) {
+              return value.split('(ID:')[0].trim();
+            }
+            return value;
+          }).join(' | ');
+          const xPos = x1Scale(groupKey);
+          return xPos !== undefined ? xPos : 0;
+        })
+        .attr('y', d => yScale(+d.measures[firstMeasureKey]))
+        .attr('width', x1Scale.bandwidth())
+        .attr('height', d => height - yScale(+d.measures[firstMeasureKey]))
+        .attr('fill', d => {
+          const groupKey = groupDimKeys.map(key => {
+            const value = d.dimensions[key];
+            // For site_id fields, extract just the site name (before "(ID: xxx)")
+            if (key === 'site_id' && value && value.includes('(ID:')) {
+              return value.split('(ID:')[0].trim();
+            }
+            // For program_id, also clean up
+            if (key === 'program_id' && value && value.includes('(ID:')) {
+              return value.split('(ID:')[0].trim();
+            }
+            return value;
+          }).join(' | ');
+          return colorScale(groupKey);
+        })
+        .style('cursor', 'pointer')
+        .on('mouseover', function(event, d: any) {
+          d3.select(this).style('opacity', 0.8);
+          if (callbacks?.onHover && settings.tooltips.show) {
+            const rect = this.getBoundingClientRect();
+            const position = { x: rect.left + rect.width / 2, y: rect.top };
+            const groupKey = groupDimKeys.map(key => {
+              const value = d.dimensions[key];
+              // For site_id fields, extract just the site name (before "(ID: xxx)")
+              if (key === 'site_id' && value && value.includes('(ID:')) {
+                return value.split('(ID:')[0].trim();
+              }
+              // For program_id, also clean up
+              if (key === 'program_id' && value && value.includes('(ID:')) {
+                return value.split('(ID:')[0].trim();
+              }
+              return value;
+            }).join(' | ');
+            const value = d.measures[firstMeasureKey];
+            callbacks.onHover([d], position, `${groupKey}: ${value}°F`);
+          }
+        })
+        .on('mouseout', function() {
+          d3.select(this).style('opacity', 1);
+          if (callbacks?.onHoverEnd) {
+            callbacks.onHoverEnd();
+          }
+        });
+    });
+
+    // Add legend for groups
+    if (settings.legends.show && groupValues.length > 1) {
+      const legendG = g.append('g')
+        .attr('class', 'legend')
+        .attr('transform', `translate(${width + 10}, 20)`);
+
+      const legendItems = legendG.selectAll('.legend-item')
+        .data(groupValues)
+        .enter().append('g')
+        .attr('class', 'legend-item')
+        .attr('transform', (d, i) => `translate(0, ${i * 20})`);
+
+      legendItems.append('rect')
+        .attr('width', 15)
+        .attr('height', 15)
+        .attr('fill', d => colorScale(d));
+
+      legendItems.append('text')
+        .attr('x', 20)
+        .attr('y', 12)
+        .style('font-size', '12px')
+        .text(d => {
+          // Parse the grouped key to show human-readable labels
+          const text = String(d);
+          if (text.includes(' | ')) {
+            // Split and clean up the parts
+            const parts = text.split(' | ');
+            const cleanedParts = parts.map(part => {
+              // Remove UUIDs and extract human-readable parts
+              if (part.includes('(ID:')) {
+                return part.split('(ID:')[0].trim();
+              }
+              return part;
+            });
+            const result = cleanedParts.join(' - ');
+            return result.length > 30 ? result.substring(0, 28) + '...' : result;
+          }
+          return text.length > 30 ? text.substring(0, 28) + '...' : text;
+        })
+        .append('title')
+        .text(d => String(d)); // Full text on hover
+    }
+
+    // Add brush selection for grouped bar charts
+    if (callbacks && settings.interactions.brush.enabled) {
+      let brushing = false;
+      
+      const brush = d3.brush()
+        .extent([[0, 0], [width, height]])
+        .on('start', function() {
+          brushing = true;
+        })
+        .on('brush', function(event) {
+          if (!brushing) return;
+          
+          const selection = event.selection;
+          if (selection) {
+            const [[x0, y0], [x1, y1]] = selection;
+            
+            // Highlight bars within selection - need to handle grouped structure
+            g.selectAll('.bar-group').each(function(this: any) {
+              const group = d3.select(this);
+              const groupTransform = group.attr('transform');
+              const groupX = groupTransform ? parseFloat(groupTransform.match(/translate\(([^,]+)/)?.[1] || '0') : 0;
+              
+              group.selectAll('rect')
+                .style('opacity', function(this: any) {
+                  const rect = d3.select(this);
+                  const barX = groupX + (+rect.attr('x'));
+                  const barY = +rect.attr('y');
+                  const barWidth = +rect.attr('width');
+                  const barHeight = +rect.attr('height');
+                  
+                  // Check if bar overlaps with brush selection
+                  const barRight = barX + barWidth;
+                  const barBottom = barY + barHeight;
+                  
+                  return (barX < x1 && barRight > x0 && barY < y1 && barBottom > y0) ? 0.8 : 0.3;
+                });
+            });
+          }
+        })
+        .on('end', function(event) {
+          if (!brushing) return;
+          brushing = false;
+          
+          const selection = event.selection;
+          if (selection) {
+            const [[x0, y0], [x1, y1]] = selection;
+            const brushedData: any[] = [];
+            
+            // For grouped bars, we need to check each bar within each group
+            g.selectAll('.bar-group').each(function(this: any) {
+              const group = d3.select(this);
+              const groupTransform = group.attr('transform');
+              const groupX = groupTransform ? parseFloat(groupTransform.match(/translate\(([^,]+)/)?.[1] || '0') : 0;
+              
+              group.selectAll('rect').each(function(this: any, d: any) {
+                const rect = d3.select(this);
+                const barX = groupX + (+rect.attr('x'));
+                const barY = +rect.attr('y');
+                const barWidth = +rect.attr('width');
+                const barHeight = +rect.attr('height');
+                
+                // Check if bar overlaps with brush selection
+                const barRight = barX + barWidth;
+                const barBottom = barY + barHeight;
+                
+                if (barX < x1 && barRight > x0 && barY < y1 && barBottom > y0) {
+                  // Push the actual data point, not the visual representation
+                  brushedData.push(d);
+                }
+              });
+            });
+            
+            if (brushedData.length > 0 && callbacks.onPointClick) {
+              const position = { x: (x0 + x1) / 2, y: (y0 + y1) / 2 };
+              callbacks.onPointClick(brushedData, position, `Selected Bars (${brushedData.length})`);
+            }
+            
+            // Clear brush selection
+            d3.select(this).call(brush.move, null);
+          }
+          
+          // Reset all bars to normal opacity
+          g.selectAll('.bar-group').selectAll('rect')
+            .style('opacity', 0.8);
+        });
+
+      // Append brush last so it's on top of bars
+      g.append('g')
+        .attr('class', 'brush')
+        .call(brush)
+        .raise(); // Ensure brush is on top
+    }
+
+    return; // Exit early for grouped chart
+  }
+  
+  // Create a unique key for each data point
+  const getCompositeKey = (d: any) => {
+    if (hasMultipleDimensions) {
+      // Combine all dimension values for grouping
+      return allDimKeys.map(key => d.dimensions[key] || '').join(' | ');
+    }
+    return d.dimensions[firstDimKey];
+  };
+
+  // Check if all values are zero
+  const allZero = data.every(d => +d.measures[firstMeasureKey] === 0);
+  if (allZero) {
+    renderEmptyState(g, width, height, 'All values are zero', 'This may indicate no growth activity or missing data');
+  }
+
+  // Use most of the available height, leaving room for labels
+  const adjustedHeight = height;
 
   // Detect if the dimension is a date for proper sorting
   const isDateDimension = isDateField(data[0].dimensions[firstDimKey]);
@@ -1375,14 +2436,17 @@ function renderBarChart(g: any, data: any[], width: number, height: number, sett
     );
   }
 
+  const domainKeys = data.map(d => getCompositeKey(d));
+  console.log('Bar chart X-axis domain keys:', domainKeys);
+  
   const xScale = d3.scaleBand()
-    .domain(data.map(d => d.dimensions[firstDimKey]))
+    .domain(domainKeys)
     .range([0, width])
     .padding(0.1);
 
   const yScale = d3.scaleLinear()
     .domain([0, d3.max(data, d => +d.measures[firstMeasureKey]) || 0])
-    .range([height, 0]);
+    .range([adjustedHeight, 0]);
 
   const colorScale = d3.scaleOrdinal(d3[settings.colors.palette as keyof typeof d3] || d3.schemeCategory10);
 
@@ -1403,21 +2467,46 @@ function renderBarChart(g: any, data: any[], width: number, height: number, sett
     const step = Math.max(1, Math.ceil(data.length / maxLabels));
     
     xAxis = d3.axisBottom(xScale)
-      .tickValues(data.filter((_, i) => i % step === 0).map(d => d.dimensions[firstDimKey]));
+      .tickValues(data.filter((_, i) => i % step === 0).map(d => getCompositeKey(d)));
   }
 
   // Add axes with smart formatting
   const xAxisGroup = g.append('g')
-    .attr('transform', `translate(0,${height})`)
+    .attr('transform', `translate(0,${adjustedHeight})`)
     .call(xAxis);
     
-  // Rotate labels if there are too many bars
-  if (data.length > 6) {
+  // Smart label formatting based on available space
+  const labelWidth = xScale.bandwidth();
+  const maxLabelChars = Math.max(5, Math.floor(labelWidth / 6)); // Approximate characters that fit
+  
+  if (data.length > 6 || labelWidth < 60) {
+    // Rotate labels for better fit
     xAxisGroup.selectAll('text')
       .style('text-anchor', 'end')
       .attr('dx', '-.8em')
       .attr('dy', '.15em')
-      .attr('transform', 'rotate(-45)');
+      .attr('transform', 'rotate(-45)')
+      .text(function(d: any) {
+        const text = String(d);
+        // For composite keys, show only the first part before the separator
+        if (text.includes(' | ')) {
+          const firstPart = text.split(' | ')[0];
+          return firstPart.length > 12 ? firstPart.substring(0, 10) + '...' : firstPart;
+        }
+        // Truncate with ellipsis if too long
+        return text.length > 12 ? text.substring(0, 10) + '...' : text;
+      })
+      .append('title')
+      .text((d: any) => String(d)); // Full text on hover
+  } else {
+    // For fewer bars, just truncate if needed
+    xAxisGroup.selectAll('text')
+      .text(function(d: any) {
+        const text = String(d);
+        return text.length > maxLabelChars ? text.substring(0, maxLabelChars - 2) + '..' : text;
+      })
+      .append('title')
+      .text((d: any) => String(d)); // Full text on hover
   }
 
   g.append('g')
@@ -1428,10 +2517,28 @@ function renderBarChart(g: any, data: any[], width: number, height: number, sett
     .data(data)
     .enter().append('rect')
     .attr('class', 'bar')
-    .attr('x', (d: any) => xScale(d.dimensions[firstDimKey]))
+    .attr('x', (d: any) => {
+      const key = getCompositeKey(d);
+      const xPos = xScale(key);
+      if (xPos === undefined) {
+        console.warn('X position undefined for key:', key);
+        return 0;
+      }
+      return xPos;
+    })
     .attr('width', xScale.bandwidth())
-    .attr('y', (d: any) => yScale(+d.measures[firstMeasureKey]))
-    .attr('height', (d: any) => height - yScale(+d.measures[firstMeasureKey]))
+    .attr('y', (d: any) => {
+      const value = +d.measures[firstMeasureKey];
+      return value >= 0 ? yScale(value) : yScale(0);
+    })
+    .attr('height', (d: any) => {
+      const value = +d.measures[firstMeasureKey];
+      if (value >= 0) {
+        return Math.max(0, adjustedHeight - yScale(value));
+      } else {
+        return Math.max(0, yScale(value) - adjustedHeight);
+      }
+    })
     .attr('fill', (d: any, i: number) => colorScale(i.toString()))
     .style('cursor', 'pointer')
     .style('opacity', 0.8);
@@ -1474,7 +2581,7 @@ function renderBarChart(g: any, data: any[], width: number, height: number, sett
     let brushing = false;
     
     const brush = d3.brush()
-      .extent([[0, 0], [width, height]])
+      .extent([[0, 0], [width, adjustedHeight]])
       .on('start', function() {
         brushing = true;
         // Remove any existing tooltips when brush starts
@@ -1492,30 +2599,33 @@ function renderBarChart(g: any, data: any[], width: number, height: number, sett
           // Highlight bars within selection
           bars
             .style('opacity', function(d: any) {
-              const barX = xScale(d.dimensions[firstDimKey]) || 0;
+              const barX = xScale(getCompositeKey(d)) || 0;
               const barWidth = xScale.bandwidth();
-              const barY = yScale(+d.measures[firstMeasureKey]);
-              const barHeight = height - barY;
+              const value = +d.measures[firstMeasureKey];
+              const barY = value >= 0 ? yScale(value) : yScale(0);
+              const barHeight = value >= 0 ? Math.max(0, adjustedHeight - yScale(value)) : Math.max(0, yScale(value) - adjustedHeight);
               
               // Check if bar overlaps with brush selection
               const isSelected = barX < x1 && barX + barWidth > x0 && barY < y1 && barY + barHeight > y0;
               return isSelected ? 1 : 0.3;
             })
             .style('stroke', function(d: any) {
-              const barX = xScale(d.dimensions[firstDimKey]) || 0;
+              const barX = xScale(getCompositeKey(d)) || 0;
               const barWidth = xScale.bandwidth();
-              const barY = yScale(+d.measures[firstMeasureKey]);
-              const barHeight = height - barY;
+              const value = +d.measures[firstMeasureKey];
+              const barY = value >= 0 ? yScale(value) : yScale(0);
+              const barHeight = value >= 0 ? Math.max(0, adjustedHeight - yScale(value)) : Math.max(0, yScale(value) - adjustedHeight);
               
               // Check if bar overlaps with brush selection
               const isSelected = barX < x1 && barX + barWidth > x0 && barY < y1 && barY + barHeight > y0;
               return isSelected ? '#000' : 'none';
             })
             .style('stroke-width', function(d: any) {
-              const barX = xScale(d.dimensions[firstDimKey]) || 0;
+              const barX = xScale(getCompositeKey(d)) || 0;
               const barWidth = xScale.bandwidth();
-              const barY = yScale(+d.measures[firstMeasureKey]);
-              const barHeight = height - barY;
+              const value = +d.measures[firstMeasureKey];
+              const barY = value >= 0 ? yScale(value) : yScale(0);
+              const barHeight = value >= 0 ? Math.max(0, adjustedHeight - yScale(value)) : Math.max(0, yScale(value) - adjustedHeight);
               
               // Check if bar overlaps with brush selection
               const isSelected = barX < x1 && barX + barWidth > x0 && barY < y1 && barY + barHeight > y0;
@@ -1539,10 +2649,11 @@ function renderBarChart(g: any, data: any[], width: number, height: number, sett
           const brushedData: any[] = [];
           
           data.forEach(dataPoint => {
-            const barX = xScale(dataPoint.dimensions[firstDimKey]) || 0;
+            const barX = xScale(getCompositeKey(dataPoint)) || 0;
             const barWidth = xScale.bandwidth();
-            const barY = yScale(+dataPoint.measures[firstMeasureKey]);
-            const barHeight = height - barY;
+            const value = +dataPoint.measures[firstMeasureKey];
+            const barY = value >= 0 ? yScale(value) : yScale(0);
+            const barHeight = value >= 0 ? Math.max(0, adjustedHeight - yScale(value)) : Math.max(0, yScale(value) - adjustedHeight);
             
             // Check if bar overlaps with brush selection
             if (barX < x1 && barX + barWidth > x0 && barY < y1 && barY + barHeight > y0) {
@@ -1566,11 +2677,379 @@ function renderBarChart(g: any, data: any[], width: number, height: number, sett
           .style('stroke-width', 0);
       });
 
+    // Append brush last so it's on top of bars
+    g.append('g')
+      .attr('class', 'brush')
+      .call(brush)
+      .raise(); // Ensure brush is on top
+  }
+
+}
+
+// Grouped bar chart for multiple dimensions/segments
+function renderGroupedBarChart(g: any, data: any[], width: number, height: number, settings: VisualizationSettings, callbacks?: any) {
+  if (!data.length) {
+    renderEmptyState(g, width, height, 'No data available', 'Check your filters and data source configuration');
+    return;
+  }
+
+  // Get all dimension keys and measure
+  const dimensionKeys = Object.keys(data[0].dimensions);
+  const firstMeasureKey = Object.keys(data[0].measures)[0];
+  
+  if (!dimensionKeys.length || !firstMeasureKey) return;
+
+  // The first dimension will be our X-axis grouping
+  const xDimKey = dimensionKeys[0];
+  const groupDimKeys = dimensionKeys.slice(1);
+  
+  // Get unique values for x-axis
+  const xValues = [...new Set(data.map(d => d.dimensions[xDimKey]))];
+  
+  // Get unique values for grouping
+  const groupValues = [...new Set(data.map(d => 
+    groupDimKeys.map(key => d.dimensions[key]).join(' | ')
+  ))].filter(v => v);
+
+  console.log('Grouped bar chart - X values:', xValues);
+  console.log('Grouped bar chart - Group values:', groupValues);
+  console.log('Grouped bar chart - Sample data point:', data[0]);
+
+  // Create scales
+  const x0Scale = d3.scaleBand()
+    .domain(xValues)
+    .range([0, width])
+    .paddingInner(0.1);
+
+  const x1Scale = d3.scaleBand()
+    .domain(groupValues)
+    .range([0, x0Scale.bandwidth()])
+    .padding(0.05);
+
+  // Find max value for Y scale
+  const maxValue = d3.max(data, d => +d.measures[firstMeasureKey]) || 0;
+  
+  const yScale = d3.scaleLinear()
+    .domain([0, maxValue * 1.1]) // Add 10% padding
+    .range([height, 0]);
+
+  // Create color scale
+  const colorScale = d3.scaleOrdinal()
+    .domain(groupValues)
+    .range(d3.schemeCategory10);
+
+  // Add axes
+  const xAxis = g.append('g')
+    .attr('transform', `translate(0,${height})`)
+    .call(d3.axisBottom(x0Scale));
+
+  // Format x-axis labels
+  xAxis.selectAll('text')
+    .style('text-anchor', 'end')
+    .attr('dx', '-.8em')
+    .attr('dy', '.15em')
+    .attr('transform', 'rotate(-45)')
+    .text((d: any) => {
+      const text = String(d);
+      // Clean up IDs and UUIDs from labels
+      if (text.includes('(ID:')) {
+        const cleaned = text.split('(ID:')[0].trim();
+        return cleaned.length > 20 ? cleaned.substring(0, 18) + '...' : cleaned;
+      }
+      return text.length > 20 ? text.substring(0, 18) + '...' : text;
+    });
+
+  g.append('g')
+    .call(d3.axisLeft(yScale));
+
+  // Create groups for each x value
+  const barGroups = g.selectAll('.bar-group')
+    .data(xValues)
+    .enter().append('g')
+    .attr('class', 'bar-group')
+    .attr('transform', d => `translate(${x0Scale(d)}, 0)`);
+
+  // Add bars within each group
+  barGroups.each(function(xValue) {
+    const group = d3.select(this);
+    const groupData = data.filter(d => d.dimensions[xDimKey] === xValue);
+    
+    group.selectAll('rect')
+      .data(groupData)
+      .enter().append('rect')
+      .attr('x', d => {
+        const groupKey = groupDimKeys.map(key => d.dimensions[key]).join(' | ');
+        return x1Scale(groupKey) || 0;
+      })
+      .attr('y', d => yScale(+d.measures[firstMeasureKey]))
+      .attr('width', x1Scale.bandwidth())
+      .attr('height', d => height - yScale(+d.measures[firstMeasureKey]))
+      .attr('fill', d => {
+        const groupKey = groupDimKeys.map(key => d.dimensions[key]).join(' | ');
+        return colorScale(groupKey);
+      })
+      .style('cursor', 'pointer')
+      .on('mouseover', function(event, d: any) {
+        d3.select(this).style('opacity', 0.8);
+        if (callbacks?.onHover && settings.tooltips.show) {
+          const rect = this.getBoundingClientRect();
+          const position = { x: rect.left + rect.width / 2, y: rect.top };
+          const groupKey = groupDimKeys.map(key => d.dimensions[key]).join(' | ');
+          const value = d.measures[firstMeasureKey];
+          callbacks.onHover([d], position, `${groupKey}: ${value}`);
+        }
+      })
+      .on('mouseout', function() {
+        d3.select(this).style('opacity', 1);
+        if (callbacks?.onHoverEnd) {
+          callbacks.onHoverEnd();
+        }
+      })
+      .on('click', function(event, d) {
+        if (callbacks?.onPointClick) {
+          const rect = this.getBoundingClientRect();
+          const position = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+          callbacks.onPointClick([d], position, 'Bar Data');
+        }
+      });
+  });
+
+  // Add legend for groups
+  if (settings.legends.show && groupValues.length > 1) {
+    const legendG = g.append('g')
+      .attr('class', 'legend')
+      .attr('transform', `translate(${width + 10}, 20)`);
+
+    const legendItems = legendG.selectAll('.legend-item')
+      .data(groupValues)
+      .enter().append('g')
+      .attr('class', 'legend-item')
+      .attr('transform', (d, i) => `translate(0, ${i * 20})`);
+
+    legendItems.append('rect')
+      .attr('width', 15)
+      .attr('height', 15)
+      .attr('fill', d => colorScale(d));
+
+    legendItems.append('text')
+      .attr('x', 20)
+      .attr('y', 12)
+      .style('font-size', '12px')
+      .text(d => {
+        // Parse the grouped key to show human-readable labels
+        const text = String(d);
+        if (text.includes(' | ')) {
+          // Split and clean up the parts
+          const parts = text.split(' | ');
+          const cleanedParts = parts.map(part => {
+            // Remove UUIDs and extract human-readable parts
+            if (part.includes('(ID:')) {
+              return part.split('(ID:')[0].trim();
+            }
+            return part;
+          });
+          const result = cleanedParts.join(' - ');
+          return result.length > 30 ? result.substring(0, 28) + '...' : result;
+        }
+        return text.length > 30 ? text.substring(0, 28) + '...' : text;
+      })
+      .append('title')
+      .text(d => String(d)); // Full text on hover
+  }
+
+  // Add brush selection
+  if (callbacks && settings.interactions.brush.enabled) {
+    const brush = d3.brush()
+      .extent([[0, 0], [width, height]])
+      .on('brush end', function(event) {
+        const selection = event.selection;
+        if (selection) {
+          const [[x0, y0], [x1, y1]] = selection;
+          
+          // Find selected bars
+          const selectedData: any[] = [];
+          barGroups.each(function() {
+            const group = d3.select(this);
+            group.selectAll('rect').each(function(d: any) {
+              const bar = d3.select(this);
+              const barX = +bar.attr('x') + (group.node() as any).transform.baseVal[0].matrix.e;
+              const barY = +bar.attr('y');
+              const barWidth = +bar.attr('width');
+              const barHeight = +bar.attr('height');
+              
+              if (barX < x1 && barX + barWidth > x0 && barY < y1 && barY + barHeight > y0) {
+                selectedData.push(d);
+                bar.style('opacity', 1).style('stroke', '#000').style('stroke-width', 2);
+              } else {
+                bar.style('opacity', 0.3).style('stroke', 'none');
+              }
+            });
+          });
+
+          if (event.type === 'end' && callbacks.onPointClick && selectedData.length > 0) {
+            callbacks.onPointClick(selectedData, { x: (x0 + x1) / 2, y: (y0 + y1) / 2 }, `Selected ${selectedData.length} bars`);
+          }
+        } else {
+          // Reset all bars
+          barGroups.selectAll('rect')
+            .style('opacity', 1)
+            .style('stroke', 'none');
+        }
+      });
+
     g.append('g')
       .attr('class', 'brush')
       .call(brush);
   }
+}
 
+// Stacked bar chart for multiple dimensions/segments
+function renderStackedBarChart(g: any, data: any[], width: number, height: number, settings: VisualizationSettings, callbacks?: any) {
+  if (!data.length) {
+    renderEmptyState(g, width, height, 'No data available', 'Check your filters and data source configuration');
+    return;
+  }
+
+  // Get all dimension keys
+  const dimensionKeys = Object.keys(data[0].dimensions);
+  const firstMeasureKey = Object.keys(data[0].measures)[0];
+  
+  if (!dimensionKeys.length || !firstMeasureKey) return;
+
+  // The first dimension will be our X-axis, others will be stacked
+  const xDimKey = dimensionKeys[0];
+  const stackDimKeys = dimensionKeys.slice(1);
+  
+  // Get unique values for x-axis
+  const xValues = [...new Set(data.map(d => d.dimensions[xDimKey]))];
+  
+  // Get unique values for stacking (combining all stack dimensions)
+  const stackGroups = new Map<string, Set<string>>();
+  data.forEach(d => {
+    const stackKey = stackDimKeys.map(key => d.dimensions[key]).join(' | ');
+    if (!stackGroups.has(stackKey)) {
+      stackGroups.set(stackKey, new Set());
+    }
+    stackGroups.get(stackKey)!.add(d.dimensions[xDimKey]);
+  });
+  
+  // Create data structure for stacking
+  const stackData: any[] = [];
+  xValues.forEach(xVal => {
+    const item: any = { x: xVal };
+    stackGroups.forEach((_, stackKey) => {
+      const dataPoint = data.find(d => 
+        d.dimensions[xDimKey] === xVal && 
+        stackDimKeys.map(key => d.dimensions[key]).join(' | ') === stackKey
+      );
+      item[stackKey] = dataPoint ? +dataPoint.measures[firstMeasureKey] : 0;
+    });
+    stackData.push(item);
+  });
+
+  // Create scales
+  const xScale = d3.scaleBand()
+    .domain(xValues)
+    .range([0, width])
+    .padding(0.1);
+
+  // Calculate max value for y-scale
+  const maxValue = d3.max(stackData, (d: any) => {
+    return d3.sum(Array.from(stackGroups.keys()), (key: string) => d[key] || 0);
+  }) || 0;
+
+  const yScale = d3.scaleLinear()
+    .domain([0, maxValue])
+    .range([height, 0]);
+
+  // Create color scale
+  const colorScale = d3.scaleOrdinal()
+    .domain(Array.from(stackGroups.keys()))
+    .range(d3.schemeCategory10);
+
+  // Create stack generator
+  const stack = d3.stack()
+    .keys(Array.from(stackGroups.keys()))
+    .order(d3.stackOrderNone)
+    .offset(d3.stackOffsetNone);
+
+  const series = stack(stackData);
+
+  // Add axes
+  g.append('g')
+    .attr('transform', `translate(0,${height})`)
+    .call(d3.axisBottom(xScale))
+    .selectAll('text')
+    .style('text-anchor', 'end')
+    .attr('dx', '-.8em')
+    .attr('dy', '.15em')
+    .attr('transform', 'rotate(-45)');
+
+  g.append('g')
+    .call(d3.axisLeft(yScale));
+
+  // Create groups for each series
+  const seriesGroups = g.selectAll('.series')
+    .data(series)
+    .enter().append('g')
+    .attr('class', 'series')
+    .attr('fill', d => colorScale(d.key));
+
+  // Add bars
+  seriesGroups.selectAll('rect')
+    .data(d => d)
+    .enter().append('rect')
+    .attr('x', (d: any) => xScale(d.data.x))
+    .attr('y', (d: any) => yScale(d[1]))
+    .attr('height', (d: any) => yScale(d[0]) - yScale(d[1]))
+    .attr('width', xScale.bandwidth())
+    .style('cursor', 'pointer')
+    .on('mouseover', function(event, d: any) {
+      const parentData = d3.select(this.parentNode).datum() as any;
+      const seriesKey = parentData.key;
+      if (callbacks?.onHover && settings.tooltips.show) {
+        const rect = this.getBoundingClientRect();
+        const position = { x: rect.left + rect.width / 2, y: rect.top };
+        const value = d[1] - d[0];
+        callbacks.onHover([d], position, `${seriesKey}: ${value}`);
+      }
+    })
+    .on('mouseout', function() {
+      if (callbacks?.onHoverEnd) {
+        callbacks.onHoverEnd();
+      }
+    });
+
+  // Add legend for stacked groups
+  const legendData = Array.from(stackGroups.keys()).map(key => ({
+    id: key,
+    name: key,
+    color: colorScale(key),
+    visible: true
+  }));
+
+  if (settings.legends.show && legendData.length > 1) {
+    const legendG = g.append('g')
+      .attr('class', 'legend')
+      .attr('transform', `translate(${width + 10}, 20)`);
+
+    const legendItems = legendG.selectAll('.legend-item')
+      .data(legendData)
+      .enter().append('g')
+      .attr('class', 'legend-item')
+      .attr('transform', (d, i) => `translate(0, ${i * 20})`);
+
+    legendItems.append('rect')
+      .attr('width', 15)
+      .attr('height', 15)
+      .attr('fill', d => d.color);
+
+    legendItems.append('text')
+      .attr('x', 20)
+      .attr('y', 12)
+      .style('font-size', '12px')
+      .text(d => d.name.length > 20 ? d.name.substring(0, 18) + '...' : d.name);
+  }
 }
 
 function renderLineChart(g: any, data: any[], width: number, height: number, settings: VisualizationSettings) {

@@ -36,7 +36,7 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
   const measureDefinitions = [
     // Petri observation measures
     { 
-      table: 'petri_observations', 
+      table: 'petri_observations_partitioned', 
       field: 'growth_index', 
       name: 'Growth Index', 
       aggregation: 'avg' as const,
@@ -45,7 +45,7 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
       description: 'Average growth index of petri dishes'
     },
     { 
-      table: 'petri_observations', 
+      table: 'petri_observations_partitioned', 
       field: 'growth_progression', 
       name: 'Growth Progression', 
       aggregation: 'avg' as const,
@@ -54,7 +54,7 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
       description: 'Average growth progression'
     },
     { 
-      table: 'petri_observations', 
+      table: 'petri_observations_partitioned', 
       field: 'growth_velocity', 
       name: 'Growth Velocity', 
       aggregation: 'avg' as const,
@@ -63,7 +63,7 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
       description: 'Average growth velocity'
     },
     { 
-      table: 'petri_observations', 
+      table: 'petri_observations_partitioned', 
       field: 'daysinthisprogramphase', 
       name: 'Days in Phase', 
       aggregation: 'avg' as const,
@@ -72,7 +72,7 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
       description: 'Average days in current program phase'
     },
     { 
-      table: 'petri_observations', 
+      table: 'petri_observations_partitioned', 
       field: 'todays_day_of_phase', 
       name: 'Day of Phase', 
       aggregation: 'avg' as const,
@@ -81,7 +81,7 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
       description: 'Current day of program phase'
     },
     { 
-      table: 'petri_observations', 
+      table: 'petri_observations_partitioned', 
       field: 'outdoor_temperature', 
       name: 'Outdoor Temperature', 
       aggregation: 'avg' as const,
@@ -90,7 +90,7 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
       description: 'Average outdoor temperature'
     },
     { 
-      table: 'petri_observations', 
+      table: 'petri_observations_partitioned', 
       field: 'outdoor_humidity', 
       name: 'Outdoor Humidity', 
       aggregation: 'avg' as const,
@@ -101,7 +101,7 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
     
     // Gasifier observation measures
     { 
-      table: 'gasifier_observations', 
+      table: 'gasifier_observations_partitioned', 
       field: 'measure', 
       name: 'Gasifier Reading', 
       aggregation: 'avg' as const,
@@ -110,7 +110,7 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
       description: 'Average gasifier measurement'
     },
     { 
-      table: 'gasifier_observations', 
+      table: 'gasifier_observations_partitioned', 
       field: 'linear_reading', 
       name: 'Linear Reading', 
       aggregation: 'avg' as const,
@@ -119,7 +119,7 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
       description: 'Average linear reading'
     },
     { 
-      table: 'gasifier_observations', 
+      table: 'gasifier_observations_partitioned', 
       field: 'linear_reduction_per_day', 
       name: 'Daily Reduction', 
       aggregation: 'avg' as const,
@@ -128,7 +128,7 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
       description: 'Average daily reduction rate'
     },
     { 
-      table: 'gasifier_observations', 
+      table: 'gasifier_observations_partitioned', 
       field: 'flow_rate', 
       name: 'Flow Rate', 
       aggregation: 'avg' as const,
@@ -137,7 +137,7 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
       description: 'Average flow rate'
     },
     { 
-      table: 'gasifier_observations', 
+      table: 'gasifier_observations_partitioned', 
       field: 'footage_from_origin_x', 
       name: 'X Position', 
       aggregation: 'avg' as const,
@@ -146,7 +146,7 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
       description: 'Average X coordinate'
     },
     { 
-      table: 'gasifier_observations', 
+      table: 'gasifier_observations_partitioned', 
       field: 'footage_from_origin_y', 
       name: 'Y Position', 
       aggregation: 'avg' as const,
@@ -271,7 +271,7 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
       description: 'Total number of petri observations'
     },
     { 
-      table: 'gasifier_observations', 
+      table: 'gasifier_observations_partitioned', 
       field: '*', 
       name: 'Gasifier Observation Count', 
       aggregation: 'count' as const,

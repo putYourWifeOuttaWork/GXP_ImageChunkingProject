@@ -124,6 +124,7 @@ export interface ReportBuilderState {
   selectedDataSource: string | null;
   selectedDimensions: string[];
   selectedMeasures: string[];
+  selectedSegments: string[];
   previewData: any;
   
   // Validation
@@ -159,6 +160,7 @@ type ReportBuilderAction =
   | { type: 'SET_SELECTED_DATA_SOURCE'; payload: string | null }
   | { type: 'SET_SELECTED_DIMENSIONS'; payload: string[] }
   | { type: 'SET_SELECTED_MEASURES'; payload: string[] }
+  | { type: 'SET_SELECTED_SEGMENTS'; payload: string[] }
   | { type: 'SET_PREVIEW_DATA'; payload: any }
   | { type: 'SET_ERRORS'; payload: Record<string, string> }
   | { type: 'SET_WARNINGS'; payload: Record<string, string> }
@@ -205,6 +207,7 @@ const initialState: ReportBuilderState = {
   selectedDataSource: null,
   selectedDimensions: [],
   selectedMeasures: [],
+  selectedSegments: [],
   previewData: null,
   errors: {},
   warnings: {},
@@ -226,25 +229,63 @@ const reportBuilderReducer = (state: ReportBuilderState, action: ReportBuilderAc
       };
     
     case 'ADD_DATA_SOURCE':
+      // If this is the first data source, make it primary automatically
+      const isFirstDataSource = state.dataSources.length === 0;
+      const newDataSource = {
+        ...action.payload,
+        isPrimary: isFirstDataSource ? true : action.payload.isPrimary || false
+      };
+      
       return {
         ...state,
-        dataSources: [...state.dataSources, action.payload],
+        dataSources: [...state.dataSources, newDataSource],
         isDirty: true
       };
     
     case 'UPDATE_DATA_SOURCE':
+      // If setting a data source as primary, ensure all others are not primary
+      let updatedDataSources = state.dataSources;
+      
+      if (action.payload.updates.isPrimary === true) {
+        // First, set all data sources to not primary
+        updatedDataSources = state.dataSources.map(ds => ({
+          ...ds,
+          isPrimary: false
+        }));
+      }
+      
+      // Now apply the update to the target data source
+      updatedDataSources = updatedDataSources.map(ds => 
+        ds.id === action.payload.id ? { ...ds, ...action.payload.updates } : ds
+      );
+      
+      // Ensure at least one data source is primary if any exist
+      const hasPrimary = updatedDataSources.some(ds => ds.isPrimary);
+      if (!hasPrimary && updatedDataSources.length > 0) {
+        updatedDataSources[0].isPrimary = true;
+      }
+      
       return {
         ...state,
-        dataSources: state.dataSources.map(ds => 
-          ds.id === action.payload.id ? { ...ds, ...action.payload.updates } : ds
-        ),
+        dataSources: updatedDataSources,
         isDirty: true
       };
     
     case 'REMOVE_DATA_SOURCE':
+      const filteredDataSources = state.dataSources.filter(ds => ds.id !== action.payload);
+      
+      // Check if we removed the primary data source
+      const removedDataSource = state.dataSources.find(ds => ds.id === action.payload);
+      const wasRemovedPrimary = removedDataSource?.isPrimary;
+      
+      // If we removed the primary and there are still data sources left, make the first one primary
+      if (wasRemovedPrimary && filteredDataSources.length > 0) {
+        filteredDataSources[0].isPrimary = true;
+      }
+      
       return {
         ...state,
-        dataSources: state.dataSources.filter(ds => ds.id !== action.payload),
+        dataSources: filteredDataSources,
         isDirty: true
       };
     
@@ -351,6 +392,9 @@ const reportBuilderReducer = (state: ReportBuilderState, action: ReportBuilderAc
     
     case 'SET_SELECTED_MEASURES':
       return { ...state, selectedMeasures: action.payload };
+    
+    case 'SET_SELECTED_SEGMENTS':
+      return { ...state, selectedSegments: action.payload };
     
     case 'SET_PREVIEW_DATA':
       return { ...state, previewData: action.payload };
@@ -556,6 +600,10 @@ export const useReportBuilder = (initialReportId?: string) => {
     dispatch({ type: 'SET_SELECTED_MEASURES', payload: ids });
   }, []);
   
+  const setSelectedSegments = useCallback((segments: string[]) => {
+    dispatch({ type: 'SET_SELECTED_SEGMENTS', payload: segments });
+  }, []);
+  
   const loadReport = useCallback((report: ReportConfiguration) => {
     dispatch({ type: 'LOAD_REPORT', payload: report });
   }, []);
@@ -602,15 +650,41 @@ export const useReportBuilder = (initialReportId?: string) => {
       // Consolidate duplicate dimensions before saving
       const consolidatedDimensions = consolidateDimensions(state.dimensions);
       
+      // Add segmentation dimensions if selected
+      const segmentDimensions: Dimension[] = [];
+      if (state.selectedSegments.length > 0) {
+        const primarySource = state.dataSources.find(ds => ds.isPrimary) || state.dataSources[0];
+        
+        state.selectedSegments.forEach(segmentField => {
+          if (!consolidatedDimensions.some(d => d.field === segmentField)) {
+            segmentDimensions.push({
+              id: `segment_${segmentField}`,
+              name: segmentField,
+              field: segmentField,
+              displayName: segmentField === 'program_id' ? 'Program' : 
+                          segmentField === 'site_id' ? 'Site' :
+                          segmentField === 'submission_id' ? 'Submission' :
+                          segmentField === 'user_id' ? 'User' : segmentField,
+              type: 'grouping',
+              source: primarySource.id,
+              dataType: 'text'
+            });
+          }
+        });
+      }
+      
+      const allDimensions = [...segmentDimensions, ...consolidatedDimensions];
+      
       const reportData: any = {
         name: state.name,
         description: state.description,
         category: state.category,
         type: state.type,
         dataSources: state.dataSources,
-        dimensions: consolidatedDimensions,
+        dimensions: allDimensions,
         measures: state.measures,
         filters: state.filters,
+        segmentBy: state.selectedSegments, // Add segmentBy for SQL query generation
         chartType: state.chartType,
         visualizationSettings: state.visualizationSettings,
         queryCacheTtl: 3600,
@@ -674,10 +748,38 @@ export const useReportBuilder = (initialReportId?: string) => {
       // Consolidate duplicate dimensions before creating report config
       const consolidatedDimensions = consolidateDimensions(state.dimensions);
       
+      // Add segmentation dimensions automatically based on selectedSegments
+      const segmentDimensions: Dimension[] = [];
+      if (state.selectedSegments.length > 0) {
+        // Find the primary data source to use as reference
+        const primarySource = state.dataSources.find(ds => ds.isPrimary) || state.dataSources[0];
+        
+        state.selectedSegments.forEach(segmentField => {
+          // Check if dimension already exists
+          if (!consolidatedDimensions.some(d => d.field === segmentField)) {
+            segmentDimensions.push({
+              id: `segment_${segmentField}`,
+              name: segmentField,
+              field: segmentField,
+              displayName: segmentField === 'program_id' ? 'Program' : 
+                          segmentField === 'site_id' ? 'Site' :
+                          segmentField === 'submission_id' ? 'Submission' :
+                          segmentField === 'user_id' ? 'User' : segmentField,
+              type: 'grouping',
+              source: primarySource.id,
+              dataType: 'text'
+            });
+          }
+        });
+      }
+      
+      // Combine regular dimensions with segment dimensions
+      const allDimensions = [...segmentDimensions, ...consolidatedDimensions];
+      
       // Build report config from current state
       console.log('Debug: generatePreview filters:', state.filters.length, state.filters);
-      console.log('Debug: generatePreview state.isDirty:', state.isDirty);
-      console.log('Debug: generatePreview localStorage cache:', localStorage.getItem(REPORT_BUILDER_CACHE_KEY));
+      console.log('Debug: generatePreview segments:', state.selectedSegments);
+      console.log('Debug: generatePreview dimensions with segments:', allDimensions.length);
       
       const reportConfig: ReportConfig = {
         id: 'preview',
@@ -686,9 +788,10 @@ export const useReportBuilder = (initialReportId?: string) => {
         category: state.category,
         type: state.type,
         dataSources: state.dataSources,
-        dimensions: consolidatedDimensions,
+        dimensions: allDimensions,
         measures: state.measures,
         filters: state.filters,
+        segmentBy: state.selectedSegments, // Add segmentBy for SQL query generation
         chartType: state.chartType,
         visualizationSettings: state.visualizationSettings,
         createdByUserId: '',
@@ -747,6 +850,7 @@ export const useReportBuilder = (initialReportId?: string) => {
     setSelectedDataSource,
     setSelectedDimensions,
     setSelectedMeasures,
+    setSelectedSegments,
     loadReport,
     resetState,
     
