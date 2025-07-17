@@ -1,14 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Filter, Calendar, Type, Hash, Search, Trash2 } from 'lucide-react';
+import { Plus, Filter, Calendar, Type, Hash, Search, Trash2, Layers, Link2 } from 'lucide-react';
 import Button from '../../common/Button';
-import { Filter as FilterType, Dimension, Measure, DataSource } from '../../../types/reporting';
+import { Filter as FilterType, FilterGroup, FilterLogic, Dimension, Measure, DataSource } from '../../../types/reporting';
 import { ReportingDataService } from '../../../services/reportingDataService';
 import { SegmentBy } from './SegmentBy';
 
 interface FilterPanelProps {
   filters: FilterType[];
+  filterGroups?: FilterGroup[];
   onAddFilter: (filter: FilterType) => void;
   onRemoveFilter: (id: string) => void;
+  onUpdateFilterGroups?: (groups: FilterGroup[]) => void;
   dimensions: Dimension[];
   measures: Measure[];
   dataSources: DataSource[];
@@ -18,8 +20,10 @@ interface FilterPanelProps {
 
 export const FilterPanel: React.FC<FilterPanelProps> = ({
   filters,
+  filterGroups = [],
   onAddFilter,
   onRemoveFilter,
+  onUpdateFilterGroups = () => {},
   dimensions,
   measures,
   dataSources,
@@ -29,6 +33,10 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
   const [showAddForm, setShowAddForm] = useState(false);
   const [dynamicFilterFields, setDynamicFilterFields] = useState<Array<{ id: string; name: string; displayName: string; dataType: string; source: string; field: string; relationshipPath?: any[]; targetTable?: string; }>>([]);
   const [loadingFilterFields, setLoadingFilterFields] = useState(false);
+  const [localFilterGroups, setLocalFilterGroups] = useState<FilterGroup[]>(filterGroups);
+  const [selectedFilters, setSelectedFilters] = useState<string[]>([]);
+  const [showGroupModal, setShowGroupModal] = useState(false);
+  const [newGroupLogic, setNewGroupLogic] = useState<FilterLogic>('and');
   const [newFilter, setNewFilter] = useState({
     name: '',
     field: '',
@@ -39,6 +47,7 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
     startValue: '', // For range filters
     endValue: '',   // For range filters
     label: '',
+    groupId: '', // Add group selection
   });
 
   // Fetch dynamic filter fields when dataSources change
@@ -207,6 +216,7 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
       case 'timestamp':
         return 'date';
       case 'boolean':
+      case 'enum':
         return 'select';
       default:
         return 'text';
@@ -217,7 +227,64 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
     const confirmed = window.confirm(`Are you sure you want to remove filter "${filterName}"?`);
     if (confirmed) {
       onRemoveFilter(filterId);
+      // Also remove from any groups
+      const updatedGroups = localFilterGroups.map(group => ({
+        ...group,
+        filters: group.filters.filter(f => f.id !== filterId)
+      })).filter(group => group.filters.length > 0);
+      setLocalFilterGroups(updatedGroups);
+      onUpdateFilterGroups(updatedGroups);
     }
+  };
+
+  const handleCreateGroup = () => {
+    if (selectedFilters.length < 2) {
+      alert('Please select at least 2 filters to create a group');
+      return;
+    }
+
+    const newGroup: FilterGroup = {
+      id: `group_${Date.now()}`,
+      name: `Filter Group ${localFilterGroups.length + 1}`,
+      filters: filters.filter(f => selectedFilters.includes(f.id)),
+      logic: newGroupLogic
+    };
+
+    const updatedGroups = [...localFilterGroups, newGroup];
+    setLocalFilterGroups(updatedGroups);
+    onUpdateFilterGroups(updatedGroups);
+    setSelectedFilters([]);
+    setShowGroupModal(false);
+  };
+
+  const handleToggleFilterSelection = (filterId: string) => {
+    setSelectedFilters(prev => 
+      prev.includes(filterId) 
+        ? prev.filter(id => id !== filterId)
+        : [...prev, filterId]
+    );
+  };
+
+  const handleRemoveGroup = (groupId: string) => {
+    const updatedGroups = localFilterGroups.filter(g => g.id !== groupId);
+    setLocalFilterGroups(updatedGroups);
+    onUpdateFilterGroups(updatedGroups);
+  };
+
+  const getFiltersByGroup = () => {
+    const grouped: { ungrouped: FilterType[], groups: FilterGroup[] } = {
+      ungrouped: [],
+      groups: localFilterGroups
+    };
+
+    // Find filters that aren't in any group
+    const groupedFilterIds = new Set(
+      localFilterGroups.flatMap(g => g.filters.map(f => f.id))
+    );
+    
+    grouped.ungrouped = filters.filter(f => !groupedFilterIds.has(f.id));
+    
+    return grouped;
   };
 
   const getIconForFilterType = (type: string) => {
@@ -396,6 +463,19 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
           />
         );
       case 'select':
+        // Find the dimension or field to get enum values
+        const currentDimension = dimensions.find(d => 
+          d.field === newFilter.field && 
+          ((d as any).source || d.dataSource) === newFilter.dataSource
+        );
+        const currentField = dynamicFilterFields.find(f => 
+          f.field === newFilter.field && 
+          f.source === newFilter.dataSource
+        );
+        
+        // Get enum values from dimension if available
+        const enumValues = (currentDimension as any)?.enumValues || (currentField as any)?.enumValues || [];
+        
         return (
           <select
             value={newFilter.value}
@@ -403,18 +483,36 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
             className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
           >
             <option value="">Select value...</option>
-            {/* Add options based on field type */}
-            {newFilter.field === 'weather' && (
+            {/* Use dynamic enum values if available */}
+            {enumValues.length > 0 ? (
+              enumValues.map((value: string) => (
+                <option key={value} value={value}>{value}</option>
+              ))
+            ) : (
+              /* Fallback to hardcoded values for known fields */
               <>
-                <option value="Clear">Clear</option>
-                <option value="Cloudy">Cloudy</option>
-                <option value="Rain">Rain</option>
-              </>
-            )}
-            {newFilter.field === 'fungicide_used' && (
-              <>
-                <option value="Yes">Yes</option>
-                <option value="No">No</option>
+                {newFilter.field === 'weather' && (
+                  <>
+                    <option value="Clear">Clear</option>
+                    <option value="Cloudy">Cloudy</option>
+                    <option value="Rain">Rain</option>
+                  </>
+                )}
+                {newFilter.field === 'fungicide_used' && (
+                  <>
+                    <option value="Yes">Yes</option>
+                    <option value="No">No</option>
+                  </>
+                )}
+                {newFilter.field === 'experimental_role' && (
+                  <>
+                    <option value="CONTROL">CONTROL</option>
+                    <option value="EXPERIMENTAL">EXPERIMENTAL</option>
+                    <option value="IGNORE_COMBINED">IGNORE_COMBINED</option>
+                    <option value="INDIVIDUAL_SAMPLE">INDIVIDUAL_SAMPLE</option>
+                    <option value="INSUFFICIENT_DATA">INSUFFICIENT_DATA</option>
+                  </>
+                )}
               </>
             )}
           </select>
@@ -452,39 +550,136 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
       {/* Applied Filters */}
       {filters.length > 0 && (
         <div className="space-y-3">
-          <h4 className="text-sm font-medium text-gray-900">Applied Filters</h4>
-          <div className="space-y-2">
-            {filters.map((filter) => (
-              <div
-                key={filter.id}
-                className="flex items-center justify-between p-3 bg-gray-50 border border-gray-200 rounded-lg"
+          <div className="flex items-center justify-between">
+            <h4 className="text-sm font-medium text-gray-900">Applied Filters</h4>
+            {filters.length > 1 && (
+              <Button
+                variant="outline"
+                size="sm"
+                icon={<Layers size={14} />}
+                onClick={() => setShowGroupModal(true)}
               >
-                <div className="flex items-center">
-                  {getIconForFilterType(filter.type)}
-                  <div className="ml-3">
-                    <h5 className="font-medium text-gray-900">{filter.label || filter.name}</h5>
-                    <p className="text-sm text-gray-600">
-                      {filter.field} {filter.operator} {filter.value}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <span className="text-xs text-gray-500 bg-gray-200 px-2 py-1 rounded">
-                    {filter.type}
-                  </span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    icon={<Trash2 size={16} />}
-                    onClick={() => handleRemoveFilter(filter.id, filter.label || filter.name)}
-                    className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                  >
-                    Remove
-                  </Button>
-                </div>
-              </div>
-            ))}
+                Create Group
+              </Button>
+            )}
           </div>
+          
+          <div className="space-y-2">
+            {(() => {
+              const { ungrouped, groups } = getFiltersByGroup();
+              
+              return (
+                <>
+                  {/* Filter Groups */}
+                  {groups.map((group) => (
+                    <div key={group.id} className="border border-blue-200 rounded-lg p-3 bg-blue-50">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center space-x-2">
+                          <Link2 size={16} className="text-blue-600" />
+                          <span className="text-sm font-medium text-blue-700">{group.name}</span>
+                          <span className="text-xs bg-blue-600 text-white px-2 py-0.5 rounded">
+                            {group.logic.toUpperCase()}
+                          </span>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleRemoveGroup(group.id)}
+                          className="text-red-600 hover:text-red-700"
+                        >
+                          Remove Group
+                        </Button>
+                      </div>
+                      <div className="space-y-2">
+                        {group.filters.map((filter, index) => (
+                          <div key={filter.id} className="flex items-center">
+                            {index > 0 && (
+                              <span className="text-xs font-semibold text-blue-600 mr-3">
+                                {group.logic.toUpperCase()}
+                              </span>
+                            )}
+                            <div className="flex-1 flex items-center justify-between p-3 bg-white border border-gray-200 rounded-lg">
+                              <div className="flex items-center">
+                                {getIconForFilterType(filter.type)}
+                                <div className="ml-3">
+                                  <h5 className="font-medium text-gray-900">{filter.label || filter.name}</h5>
+                                  <p className="text-sm text-gray-600">
+                                    {filter.field} {filter.operator} {filter.value}
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="flex items-center space-x-2">
+                                <span className="text-xs text-gray-500 bg-gray-200 px-2 py-1 rounded">
+                                  {filter.type}
+                                </span>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  icon={<Trash2 size={16} />}
+                                  onClick={() => handleRemoveFilter(filter.id, filter.label || filter.name)}
+                                  className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                                >
+                                  Remove
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                  
+                  {/* Ungrouped Filters */}
+                  {ungrouped.map((filter, index) => (
+                    <div key={filter.id} className="flex items-center">
+                      {index > 0 && groups.length === 0 && (
+                        <span className="text-xs font-semibold text-gray-600 mr-3">AND</span>
+                      )}
+                      <div className="flex-1 flex items-center justify-between p-3 bg-gray-50 border border-gray-200 rounded-lg">
+                        <div className="flex items-center">
+                          <input
+                            type="checkbox"
+                            checked={selectedFilters.includes(filter.id)}
+                            onChange={() => handleToggleFilterSelection(filter.id)}
+                            className="mr-3"
+                          />
+                          {getIconForFilterType(filter.type)}
+                          <div className="ml-3">
+                            <h5 className="font-medium text-gray-900">{filter.label || filter.name}</h5>
+                            <p className="text-sm text-gray-600">
+                              {filter.field} {filter.operator} {filter.value}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <span className="text-xs text-gray-500 bg-gray-200 px-2 py-1 rounded">
+                            {filter.type}
+                          </span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            icon={<Trash2 size={16} />}
+                            onClick={() => handleRemoveFilter(filter.id, filter.label || filter.name)}
+                            className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                          >
+                            Remove
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </>
+              );
+            })()}
+          </div>
+          
+          {selectedFilters.length > 0 && (
+            <div className="bg-blue-100 p-3 rounded-lg">
+              <p className="text-sm text-blue-800">
+                {selectedFilters.length} filter(s) selected. Click "Create Group" to group them with AND/OR logic.
+              </p>
+            </div>
+          )}
         </div>
       )}
 
@@ -686,14 +881,84 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
             <h4 className="text-sm font-medium text-blue-900 mb-1">Filter Tips</h4>
             <ul className="text-sm text-blue-800 space-y-1">
               <li>• Filters are applied before aggregation</li>
-              <li>• Use date filters for time-based analysis</li>
-              <li>• Combine multiple filters for precise results</li>
+              <li>• Create filter groups for complex logic (e.g., A AND (B OR C))</li>
+              <li>• Ungrouped filters use AND logic between them</li>
               <li>• Text filters support wildcards and regex</li>
               <li>• Numeric filters enable range analysis</li>
             </ul>
           </div>
         </div>
       </div>
+
+      {/* Group Creation Modal */}
+      {showGroupModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+            <h3 className="text-lg font-medium text-gray-900 mb-4">Create Filter Group</h3>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Group Logic
+                </label>
+                <div className="flex space-x-4">
+                  <label className="flex items-center">
+                    <input
+                      type="radio"
+                      value="and"
+                      checked={newGroupLogic === 'and'}
+                      onChange={(e) => setNewGroupLogic(e.target.value as FilterLogic)}
+                      className="mr-2"
+                    />
+                    <span>AND</span>
+                  </label>
+                  <label className="flex items-center">
+                    <input
+                      type="radio"
+                      value="or"
+                      checked={newGroupLogic === 'or'}
+                      onChange={(e) => setNewGroupLogic(e.target.value as FilterLogic)}
+                      className="mr-2"
+                    />
+                    <span>OR</span>
+                  </label>
+                </div>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Selected Filters ({selectedFilters.length})
+                </label>
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {filters.filter(f => selectedFilters.includes(f.id)).map(filter => (
+                    <div key={filter.id} className="p-2 bg-gray-50 rounded text-sm">
+                      {filter.label || filter.name}: {filter.field} {filter.operator} {filter.value}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex justify-end space-x-3 mt-6">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowGroupModal(false);
+                  setSelectedFilters([]);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                onClick={handleCreateGroup}
+              >
+                Create Group
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

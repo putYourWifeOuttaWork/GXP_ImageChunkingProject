@@ -3,6 +3,7 @@ import { Eye, RefreshCw, Download, Share, AlertCircle, CheckCircle, BarChart } f
 import Button from '../../common/Button';
 import { AggregatedData } from '../../../types/reporting';
 import { IsolationFilter, IsolationState } from './IsolationFilter';
+import { SecureExportMenu } from '../export/SecureExportMenu';
 import { BarChart as D3BarChart } from '../visualizations/charts/BarChart';
 import { LineChart as D3LineChart } from '../visualizations/charts/LineChart';
 import { PieChart as D3PieChart } from '../visualizations/charts/PieChart';
@@ -14,6 +15,7 @@ import { ScatterPlot } from '../visualizations/charts/ScatterPlot';
 import { Histogram } from '../visualizations/charts/Histogram';
 import { TreeMap } from '../visualizations/charts/TreeMap';
 import { SpatialEffectivenessMap } from '../visualizations/scientific/SpatialEffectivenessMap';
+import { TableVisualization } from '../visualizations/TableVisualization';
 import { DataViewer } from '../visualizations/DataViewer';
 
 interface PreviewPanelProps {
@@ -21,6 +23,7 @@ interface PreviewPanelProps {
   isLoading: boolean;
   onGeneratePreview: () => void;
   reportConfig: any;
+  onIsolationFiltersChange?: (filters: IsolationState) => void;
 }
 
 export const PreviewPanel: React.FC<PreviewPanelProps> = ({
@@ -28,8 +31,12 @@ export const PreviewPanel: React.FC<PreviewPanelProps> = ({
   isLoading,
   onGeneratePreview,
   reportConfig,
+  onIsolationFiltersChange,
 }) => {
-  const [isolationState, setIsolationState] = useState<IsolationState>({});
+  // Initialize isolation state from reportConfig if available
+  const [isolationState, setIsolationState] = useState<IsolationState>(
+    reportConfig.isolationFilters || {}
+  );
   const [showDataViewer, setShowDataViewer] = useState(false);
   const [selectedData, setSelectedData] = useState<any[]>([]);
   const [dataViewerTitle, setDataViewerTitle] = useState('');
@@ -46,36 +53,36 @@ export const PreviewPanel: React.FC<PreviewPanelProps> = ({
         // Check each isolation criteria
         for (const [segment, values] of Object.entries(isolationState)) {
           if (values && values.length > 0) {
-            // Look for the value in the correct segment field from the query
-            const rowValue = row.dimensions[segment] || row.dimensions[`segment_${segment}`];
+            // Look for the value in various places based on our data structure
+            let rowValue;
             
-            // Special handling for different segment types
-            if (segment === 'site_id') {
-              // The segment_site_id field contains the site name, so we match directly
-              const hasMatch = values.some(selectedValue => {
-                return rowValue === selectedValue;
-              });
-              
-              if (!hasMatch) return false;
-            } else if (segment === 'program_id') {
-              // The segment_program_id field contains the program name, so we match directly
-              const hasMatch = values.some(selectedValue => {
-                return rowValue === selectedValue;
-              });
-              
-              if (!hasMatch) return false;
+            // Get the segment value from the row
+            if (segment === 'program_id') {
+              rowValue = row.program_id || 
+                        row.segments?.segment_program_id ||
+                        row.dimensions?.program_id || 
+                        row.metadata?.program_id;
+            } else if (segment === 'site_id') {
+              rowValue = row.site_id || 
+                        row.segments?.segment_site_id ||
+                        row.dimensions?.site_id || 
+                        row.metadata?.site_id;
             } else if (segment === 'submission_id') {
-              // For submissions, we filter by the original submission_id (not the display value)
-              const hasMatch = values.some(selectedValue => {
-                return rowValue === selectedValue;
+              rowValue = row.submission_id || 
+                        row.segments?.segment_submission_id ||
+                        row.dimensions?.submission_id || 
+                        row.metadata?.submission_id;
+            }
+            
+            console.log('Filtering by', segment, ':', {
+                rowValue,
+                selectedValues: values,
+                row
               });
-              
-              if (!hasMatch) return false;
-            } else {
-              // For other segments, simple value matching
-              if (!values.includes(rowValue)) {
-                return false;
-              }
+            
+            // Check if the row value matches any of the selected values
+            if (!rowValue || !values.includes(String(rowValue))) {
+              return false;
             }
           }
         }
@@ -225,6 +232,8 @@ export const PreviewPanel: React.FC<PreviewPanelProps> = ({
         return <GrowthProgressionChart {...chartProps} />;
       case 'spatial_effectiveness':
         return <SpatialEffectivenessMap {...chartProps} />;
+      case 'table':
+        return <TableVisualization {...chartProps} />;
       default:
         return <D3BarChart {...chartProps} />;
     }
@@ -245,7 +254,7 @@ export const PreviewPanel: React.FC<PreviewPanelProps> = ({
       <div className="space-y-6">
         {/* Isolation Filter - check both segmentBy and segments in filters */}
         {(() => {
-          // Use segments from reportConfig if available
+          // Use segments from reportConfig if available (segmentBy is the correct field from actual reports, selectedSegments is from builder state)
           const segments = reportConfig.segmentBy || reportConfig.selectedSegments || [];
           
           console.log('ReportConfig segmentBy:', reportConfig.segmentBy);
@@ -260,7 +269,14 @@ export const PreviewPanel: React.FC<PreviewPanelProps> = ({
                 <IsolationFilter
                   data={previewData}
                   segmentBy={segments}
-                  onIsolationChange={setIsolationState}
+                  initialState={isolationState}
+                  onIsolationChange={(filters) => {
+                    setIsolationState(filters);
+                    // Notify parent component if callback provided
+                    if (onIsolationFiltersChange) {
+                      onIsolationFiltersChange(filters);
+                    }
+                  }}
                 />
               </div>
             );
@@ -371,14 +387,22 @@ export const PreviewPanel: React.FC<PreviewPanelProps> = ({
               >
                 Refresh
               </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                icon={<Download size={16} />}
-                disabled={!previewData}
-              >
-                Export
-              </Button>
+              <SecureExportMenu
+                data={filteredData?.data || []}
+                columns={[
+                  ...reportConfig.dimensions.map((dim: any) => ({
+                    field: `dimensions.${dim.field}`,
+                    label: dim.displayName || dim.name,
+                    type: dim.dataType || 'string'
+                  })),
+                  ...reportConfig.measures.map((measure: any) => ({
+                    field: `measures.${measure.field}`,
+                    label: measure.displayName || measure.name,
+                    type: 'number'
+                  }))
+                ]}
+                reportName={reportConfig.name || 'report'}
+              />
               <Button
                 variant="outline"
                 size="sm"
@@ -431,11 +455,24 @@ export const PreviewPanel: React.FC<PreviewPanelProps> = ({
                             
                             // Check if it's a date and format it
                             if (typeof value === 'string' && value.match(/^\d{4}-\d{2}-\d{2}/)) {
-                              const date = new Date(value);
-                              const month = date.getMonth() + 1;
-                              const day = date.getDate();
-                              const year = date.getFullYear().toString().slice(-2);
-                              return `${month}/${day}/${year}`;
+                              // Debug: log the raw value
+                              console.log('Raw date value from data:', value);
+                              
+                              // Extract date parts directly from the ISO string to avoid timezone issues
+                              const [datePart, timePart] = value.split('T');
+                              const [year, month, day] = datePart.split('-');
+                              const shortYear = year.slice(-2);
+                              
+                              // If there's a time part, extract it
+                              if (timePart) {
+                                const [hour, minute] = timePart.split(':');
+                                const hourNum = parseInt(hour);
+                                const isPM = hourNum >= 12;
+                                const hour12 = hourNum > 12 ? hourNum - 12 : (hourNum === 0 ? 12 : hourNum);
+                                return `${parseInt(month)}/${parseInt(day)}/${shortYear} ${hour12}:${minute} ${isPM ? 'PM' : 'AM'}`;
+                              }
+                              
+                              return `${parseInt(month)}/${parseInt(day)}/${shortYear}`;
                             }
                             
                             return value;

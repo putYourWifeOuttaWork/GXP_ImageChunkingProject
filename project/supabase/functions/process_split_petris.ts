@@ -1,12 +1,12 @@
 // Supabase Edge Function to handle image splitting for petri observations
-// This is a placeholder/skeleton implementation that would interface with your Python app
+// This connects to your Python app on Render
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.8";
 
 // Create a Supabase client with the Admin key (since we need full access)
 const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
 const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
-const pythonAppUrl = Deno.env.get("PYTHON_APP_URL") || "https://your-python-app-url.com/process-split";
+const pythonAppUrl = Deno.env.get("PYTHON_APP_URL") || "https://your-render-app.onrender.com/process-split";
 
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
@@ -90,6 +90,20 @@ Deno.serve(async (req) => {
       );
     }
     
+    // Validate that we have an image URL
+    if (!mainObservation.image_url) {
+      return new Response(
+        JSON.stringify({ 
+          success: false, 
+          error: "No image URL found for this observation" 
+        }),
+        {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+    
     // Get the left/right observations
     const { data: splitObservations, error: splitError } = await supabase
       .from("petri_observations")
@@ -124,35 +138,65 @@ Deno.serve(async (req) => {
       );
     }
 
-    // In a real implementation, you would now call your Python app to process the image
-    // Here we'll just simulate that with a console log
-    console.log("Would call Python app with main observation:", {
-      observation_id: mainObservation.observation_id,
-      image_url: mainObservation.image_url,
-      left_observation_id: splitObservations.find(o => o.phase_observation_settings?.position === 'left')?.observation_id,
-      right_observation_id: splitObservations.find(o => o.phase_observation_settings?.position === 'right')?.observation_id
-    });
-    
-    // In a real implementation, you would make an HTTP request to your Python app
-    // const pythonResponse = await fetch(pythonAppUrl, {
-    //   method: "POST",
-    //   headers: { "Content-Type": "application/json" },
-    //   body: JSON.stringify({
-    //     main_observation_id: mainObservation.observation_id,
-    //     main_image_url: mainObservation.image_url,
-    //     left_observation_id: splitObservations.find(o => o.phase_observation_settings?.position === 'left')?.observation_id,
-    //     right_observation_id: splitObservations.find(o => o.phase_observation_settings?.position === 'right')?.observation_id,
-    //   })
-    // });
-    
-    // const pythonResult: PythonAppResponse = await pythonResponse.json();
-    
-    // For testing purposes, simulate a successful response
-    const pythonResult: PythonAppResponse = {
-      success: true,
-      left_image_url: mainObservation.image_url + "?left=true",
-      right_image_url: mainObservation.image_url + "?right=true"
+    // Find left and right observations
+    const leftObservation = splitObservations.find(o => 
+      o.phase_observation_settings?.position === 'left'
+    );
+    const rightObservation = splitObservations.find(o => 
+      o.phase_observation_settings?.position === 'right'
+    );
+
+    if (!leftObservation || !rightObservation) {
+      return new Response(
+        JSON.stringify({ 
+          success: false, 
+          error: "Could not find properly configured left and right observations" 
+        }),
+        {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    // Prepare data for Python app
+    const pythonRequestData = {
+      main_observation_id: mainObservation.observation_id,
+      main_image_url: mainObservation.image_url,
+      left_observation_id: leftObservation.observation_id,
+      right_observation_id: rightObservation.observation_id
     };
+
+    console.log("Calling Python app at:", pythonAppUrl);
+    console.log("Request data:", pythonRequestData);
+
+    // Call your Python app on Render
+    const pythonResponse = await fetch(pythonAppUrl, {
+      method: "POST",
+      headers: { 
+        "Content-Type": "application/json",
+        "User-Agent": "Supabase-Edge-Function"
+      },
+      body: JSON.stringify(pythonRequestData)
+    });
+
+    if (!pythonResponse.ok) {
+      const errorText = await pythonResponse.text();
+      console.error("Python app HTTP error:", pythonResponse.status, errorText);
+      return new Response(
+        JSON.stringify({ 
+          success: false, 
+          error: `Python app returned ${pythonResponse.status}: ${errorText}` 
+        }),
+        {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    const pythonResult: PythonAppResponse = await pythonResponse.json();
+    console.log("Python app response:", pythonResult);
     
     // If Python app processing was successful, update the database
     if (pythonResult.success && pythonResult.left_image_url && pythonResult.right_image_url) {
@@ -160,9 +204,9 @@ Deno.serve(async (req) => {
       const { data: completeResult, error: completeError } = await supabase.rpc(
         "complete_petri_split_processing",
         {
-          p_main_petri_id: mainObservation.observation_id,
-          p_left_image_url: pythonResult.left_image_url,
-          p_right_image_url: pythonResult.right_image_url
+          main_observation_id: mainObservation.observation_id,
+          left_image_url: pythonResult.left_image_url,
+          right_image_url: pythonResult.right_image_url
         }
       );
       
@@ -184,6 +228,9 @@ Deno.serve(async (req) => {
         JSON.stringify({ 
           success: true,
           message: "Split processing completed successfully",
+          main_observation_id: mainObservation.observation_id,
+          left_observation_id: leftObservation.observation_id,
+          right_observation_id: rightObservation.observation_id,
           result: completeResult
         }),
         {

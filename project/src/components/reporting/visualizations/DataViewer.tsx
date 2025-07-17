@@ -57,55 +57,110 @@ export const DataViewer: React.FC<DataViewerProps> = ({
   const [selectedTab, setSelectedTab] = useState<'table' | 'summary'>('table');
   const [imageModalVisible, setImageModalVisible] = useState(false);
   const [imageModalData, setImageModalData] = useState<any[]>([]);
+  const [imageModalStartIndex, setImageModalStartIndex] = useState(0);
 
   // Helper function to construct drill-down URLs
   const constructDrillDownUrl = (row: DataPoint): string | null => {
-    const { metadata } = row;
-    if (!metadata) return null;
+    // Get properties from metadata first, then fallback to direct row properties
+    const submissionId = row.metadata?.submission_id || (row as any).submission_id;
+    const siteId = row.metadata?.site_id || (row as any).site_id;
+    const programId = row.metadata?.program_id || (row as any).program_id;
 
     // For observation records: /programs/{program_id}/sites/{site_id}/submissions/{submission_id}/edit
-    if (metadata.submission_id && metadata.site_id && metadata.program_id) {
-      return `/programs/${metadata.program_id}/sites/${metadata.site_id}/submissions/${metadata.submission_id}/edit`;
+    if (submissionId && siteId && programId) {
+      return `/programs/${programId}/sites/${siteId}/submissions/${submissionId}/edit`;
     }
     
     // For site records: /programs/{program_id}/sites/{site_id}
-    if (metadata.site_id && metadata.program_id) {
-      return `/programs/${metadata.program_id}/sites/${metadata.site_id}`;
+    if (siteId && programId) {
+      return `/programs/${programId}/sites/${siteId}`;
     }
     
     // For program records: /programs/{program_id}
-    if (metadata.program_id) {
-      return `/programs/${metadata.program_id}`;
+    if (programId) {
+      return `/programs/${programId}`;
     }
     
     return null;
   };
 
-  // Helper function to handle image preview
-  const handleImagePreview = (row: DataPoint) => {
-    const { metadata } = row;
-    if (!metadata) return;
-
-    // Determine the observation type
-    const observationType = metadata.petri_code ? 'petri' : metadata.gasifier_code ? 'gasifier' : 'unknown';
+  // Helper function to handle image preview - now supports multiple images!
+  const handleImagePreview = (clickedRow: DataPoint) => {
+    console.log('🔍 Handling image preview for:', { 
+      clickedRow, 
+      totalData: data.length,
+      clickedRowImageUrl: clickedRow.metadata?.image_url || (clickedRow as any).image_url
+    });
     
-    // Create image data array (future: could be multiple images for aggregated data)
-    const imageData = [{
-      url: metadata.image_url || null,
-      metadata: {
-        petri_code: metadata.petri_code,
-        gasifier_code: metadata.gasifier_code,
-        created_at: metadata.created_at,
-        placement: metadata.placement,
-        observation_id: metadata.observation_id,
-        type: observationType as 'petri' | 'gasifier',
-        program_name: metadata.program_name,
-        site_name: metadata.site_name,
-        global_submission_id: metadata.global_submission_id
-      }
-    }];
+    // Create image data array from ALL available data (for carousel functionality)
+    const imageData = data.map((row, index) => {
+      // Get properties from metadata first, then fallback to direct row properties
+      const imageUrl = row.metadata?.image_url || (row as any).image_url;
+      const petriCode = row.metadata?.petri_code || (row as any).petri_code;
+      const gasifierCode = row.metadata?.gasifier_code || (row as any).gasifier_code;
+      const createdAt = row.metadata?.created_at || (row as any).created_at;
+      const placement = row.metadata?.placement || (row as any).placement;
+      const observationId = row.metadata?.observation_id || (row as any).observation_id;
+      const programName = row.metadata?.program_name || (row as any).program_name || 
+                        row.pilot_programs?.name || row.segmentMetadata?.program_id_name;
+      const siteName = row.metadata?.site_name || (row as any).site_name ||
+                     row.sites?.name || row.segmentMetadata?.site_id_name;
+      const globalSubmissionId = row.metadata?.global_submission_id || (row as any).global_submission_id ||
+                               row.submissions?.global_submission_id;
 
-    setImageModalData(imageData);
+      // Determine the observation type
+      const observationType = petriCode ? 'petri' : gasifierCode ? 'gasifier' : 'unknown';
+      
+      console.log(`📸 Row ${index}:`, {
+        imageUrl: imageUrl?.substring(0, 60) + '...',
+        petriCode,
+        gasifierCode,
+        hasImage: !!imageUrl
+      });
+      
+      return {
+        url: imageUrl || null,
+        metadata: {
+          petri_code: petriCode,
+          gasifier_code: gasifierCode,
+          created_at: createdAt,
+          placement: placement,
+          observation_id: observationId,
+          type: observationType as 'petri' | 'gasifier',
+          program_name: programName,
+          site_name: siteName,
+          global_submission_id: globalSubmissionId,
+          row_index: index, // Track which row this image belongs to
+          growth_index: row.measures?.growth_index || (row as any).growth_index,
+          // Add additional context for carousel navigation
+          dimensions: row.dimensions,
+          measures: row.measures
+        }
+      };
+    });
+
+    // Filter to only include records that have images
+    const filteredImageData = imageData.filter(item => item.url);
+    
+    console.log('🎠 Image carousel data:', { 
+      totalRecords: data.length,
+      totalImages: filteredImageData.length,
+      allImageUrls: imageData.map((img, i) => `${i}: ${img.url ? 'HAS_IMAGE' : 'NO_IMAGE'}`),
+      filteredImageUrls: filteredImageData.map((img, i) => `${i}: ${img.url?.substring(0, 50)}...`)
+    });
+
+    // Find the index of the clicked row to start the carousel at the right position
+    const clickedRowImageUrl = clickedRow.metadata?.image_url || (clickedRow as any).image_url;
+    const startIndex = filteredImageData.findIndex(img => img.url === clickedRowImageUrl);
+    
+    console.log('🎯 Starting carousel:', {
+      clickedRowImageUrl: clickedRowImageUrl?.substring(0, 50) + '...',
+      startIndex,
+      totalFilteredImages: filteredImageData.length
+    });
+    
+    setImageModalData(filteredImageData);
+    setImageModalStartIndex(Math.max(0, startIndex)); // Ensure non-negative index
     setImageModalVisible(true);
   };
 
@@ -521,7 +576,8 @@ export const DataViewer: React.FC<DataViewerProps> = ({
         isVisible={imageModalVisible}
         onClose={() => setImageModalVisible(false)}
         images={imageModalData}
-        title="Observation Image Preview"
+        title={config.measures.length > 0 ? config.measures[0].displayName : "Observation Image Preview"}
+        initialIndex={imageModalStartIndex}
       />
     </div>
   );

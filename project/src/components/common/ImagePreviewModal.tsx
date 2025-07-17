@@ -21,26 +21,33 @@ interface ImagePreviewModalProps {
   onClose: () => void;
   images: ImageData[];
   title?: string;
+  initialIndex?: number;
 }
 
 export const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({
   isVisible,
   onClose,
   images,
-  title = "Observation Image Preview"
+  title = "Observation Image Preview",
+  initialIndex = 0
 }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [imageLoading, setImageLoading] = useState(true);
   const [imageError, setImageError] = useState(false);
 
-  // Reset state when modal opens
+  // Reset state when modal opens or initialIndex changes
   useEffect(() => {
     if (isVisible) {
-      setCurrentIndex(0);
+      console.log('🖼️ ImagePreviewModal opening:', {
+        totalImages: images.length,
+        initialIndex,
+        imageUrls: images.map((img, i) => `${i}: ${img.url?.substring(0, 50)}...`)
+      });
+      setCurrentIndex(initialIndex);
       setImageLoading(true);
       setImageError(false);
     }
-  }, [isVisible]);
+  }, [isVisible, initialIndex]);
 
   // Handle escape key
   useEffect(() => {
@@ -84,6 +91,14 @@ export const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({
 
   const currentImage = images[currentIndex];
   const hasMultipleImages = images.length > 1;
+  
+  console.log('🎯 Current image state:', {
+    currentIndex,
+    totalImages: images.length,
+    currentImageUrl: currentImage?.url?.substring(0, 50) + '...',
+    imageLoading,
+    imageError
+  });
 
   const handlePrevious = () => {
     setCurrentIndex((prev) => (prev - 1 + images.length) % images.length);
@@ -98,11 +113,13 @@ export const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({
   };
 
   const handleImageLoad = () => {
+    console.log('✅ Image loaded successfully:', currentImage?.url?.substring(0, 50) + '...');
     setImageLoading(false);
     setImageError(false);
   };
 
   const handleImageError = () => {
+    console.log('❌ Image failed to load:', currentImage?.url?.substring(0, 50) + '...');
     setImageLoading(false);
     setImageError(true);
   };

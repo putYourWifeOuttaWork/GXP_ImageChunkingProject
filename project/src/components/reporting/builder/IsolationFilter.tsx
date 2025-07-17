@@ -6,6 +6,7 @@ interface IsolationFilterProps {
   data: AggregatedData;
   segmentBy: string[];
   onIsolationChange: (isolation: IsolationState) => void;
+  initialState?: IsolationState;
   className?: string;
 }
 
@@ -25,66 +26,98 @@ export const IsolationFilter: React.FC<IsolationFilterProps> = ({
   data,
   segmentBy,
   onIsolationChange,
+  initialState,
   className = ''
 }) => {
-  const [isolation, setIsolation] = useState<IsolationState>({});
+  const [isolation, setIsolation] = useState<IsolationState>(initialState || {});
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
 
   // Extract unique values for each segment
   const segmentOptions = useMemo(() => {
     const options: Record<string, SegmentOption[]> = {};
     
+    console.log('IsolationFilter - data received:', {
+      dataLength: data.data.length,
+      firstRow: data.data[0],
+      segmentBy
+    });
+    
     segmentBy.forEach(segment => {
       const uniqueValues = new Map<string, SegmentOption>();
       
       data.data.forEach(row => {
-        // Look for segment data in the correct field names from the query
-        // The query creates fields like segment_program_id, segment_site_id, etc.
-        let value = row.dimensions[segment] || row.dimensions[`segment_${segment}`] || row.metadata?.[segment];
-        let displayName = value;
-        
-        
+        // Look for segment data in metadata (where segments are stored after query processing)
+        let value: string = '';
+        let displayName: string = '';
         
         // Use human-readable names when available
         if (segment === 'program_id') {
-          // The segment_program_id field already contains the human-readable program name from the query
-          // So we can use it directly as both value and displayName for grouping
-          if (value && value !== 'Unknown' && value.trim() !== '') {
-            displayName = value;
-            // Use the human-readable name as the grouping value too
+          // Check for nested relationship data from Supabase query
+          const programName = row.pilot_programs?.name || 
+                            row.segmentMetadata?.program_id_name ||
+                            row.metadata?.segment_program_name;
+          const programId = row.program_id || 
+                          row.segments?.segment_program_id ||
+                          row.metadata?.program_id;
+          
+          console.log('Program data for row:', {
+            programName,
+            programId,
+            pilot_programs: row.pilot_programs,
+            segmentMetadata: row.segmentMetadata,
+            row
+          });
+          
+          if (programName && programName !== 'Unknown' && programName.trim() !== '') {
+            displayName = programName;
+            value = programId || 'unknown'; // Use program ID for filtering
           } else {
-            // Fallback to original program_id if segment field is empty
-            const originalId = row.metadata?.program_id || row.dimensions?.program_id;
-            displayName = originalId ? `Program ${originalId.toString().substring(0, 8)}` : 'Unknown Program';
-            value = originalId || 'unknown';
+            // Fallback to program ID
+            displayName = programId ? `Program ${programId.toString().substring(0, 8)}` : 'Unknown Program';
+            value = programId || 'unknown';
           }
         } else if (segment === 'site_id') {
-          // For sites: look for site_code in the data
-          const siteCode = row.dimensions?.site_code || row.metadata?.site_code || row.site_code;
-          const siteId = row.dimensions?.site_id || row.metadata?.site_id || row.site_id;
+          // Check for nested relationship data from Supabase query
+          const siteName = row.sites?.name || 
+                         row.segmentMetadata?.site_id_name ||
+                         row.metadata?.segment_site_name || 
+                         row.metadata?.site_name;
+          const siteId = row.site_id || 
+                       row.dimensions?.site_id || 
+                       row.segments?.segment_site_id ||
+                       row.metadata?.site_id;
           
-          // Debug logging
-          if (!siteCode) {
-            console.log('IsolationFilter: No site_code found in row:', {
-              dimensions: row.dimensions,
-              metadata: row.metadata,
-              site_id: siteId
-            });
-          }
+          console.log('Processing site segment for row:', {
+            siteName,
+            siteId,
+            metadata: row.metadata,
+            dimensions: row.dimensions,
+            row
+          });
           
-          if (siteCode) {
-            // Use site_code for display with "Site #" prefix
-            displayName = `Site #${siteCode.toString()}`;
-            value = siteId || value; // Use site_id for WHERE clause filtering
+          if (siteName && siteName !== 'Unknown Site' && siteName.trim() !== '') {
+            // Use the site name for display
+            displayName = siteName;
+            value = siteId || siteName; // Use site_id for filtering
+          } else if (siteId) {
+            // Fallback to showing a shortened site ID if no name available
+            displayName = `Site ${siteId.toString().substring(0, 8)}...`;
+            value = siteId;
           } else {
-            // If no site_code, just show the site_id (but this shouldn't happen)
-            displayName = siteId ? `Site ${siteId.toString().substring(0, 8)}` : 'Unknown Site';
-            value = siteId || 'unknown';
+            displayName = 'Unknown Site';
+            value = 'unknown';
           }
         } else if (segment === 'submission_id') {
-          // For submissions: look for global_submission_id in the data
-          const globalSubmissionId = row.dimensions?.global_submission_id || row.metadata?.global_submission_id || row.global_submission_id;
-          const submissionId = row.dimensions?.submission_id || row.metadata?.submission_id || row.submission_id;
+          // Check for nested relationship data from Supabase query
+          const globalSubmissionId = row.submissions?.global_submission_id ||
+                                   row.segmentMetadata?.submission_id_global ||
+                                   row.dimensions?.global_submission_id || 
+                                   row.metadata?.global_submission_id || 
+                                   row.global_submission_id;
+          const submissionId = row.submission_id ||
+                             row.dimensions?.submission_id || 
+                             row.segments?.segment_submission_id ||
+                             row.metadata?.submission_id;
           
           // Debug logging
           if (!globalSubmissionId) {
@@ -154,31 +187,26 @@ export const IsolationFilter: React.FC<IsolationFilterProps> = ({
     return options;
   }, [data, segmentBy]);
 
-  // Update parent when isolation changes
-  useEffect(() => {
-    onIsolationChange(isolation);
-  }, [isolation, onIsolationChange]);
-
   const handleToggleValue = (segment: string, value: string) => {
-    setIsolation(prev => {
-      const currentValues = prev[segment as keyof IsolationState] || [];
-      const newValues = currentValues.includes(value)
-        ? currentValues.filter(v => v !== value)
-        : [...currentValues, value];
-      
-      return {
-        ...prev,
-        [segment]: newValues.length > 0 ? newValues : undefined
-      };
-    });
+    const currentValues = isolation[segment as keyof IsolationState] || [];
+    const newValues = currentValues.includes(value)
+      ? currentValues.filter(v => v !== value)
+      : [...currentValues, value];
+    
+    const newIsolation = {
+      ...isolation,
+      [segment]: newValues.length > 0 ? newValues : undefined
+    };
+    
+    setIsolation(newIsolation);
+    onIsolationChange(newIsolation);
   };
 
   const handleClearSegment = (segment: string) => {
-    setIsolation(prev => {
-      const newState = { ...prev };
-      delete newState[segment as keyof IsolationState];
-      return newState;
-    });
+    const newState = { ...isolation };
+    delete newState[segment as keyof IsolationState];
+    setIsolation(newState);
+    onIsolationChange(newState);
   };
 
   const getSegmentLabel = (segment: string): string => {

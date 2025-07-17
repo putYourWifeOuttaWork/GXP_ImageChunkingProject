@@ -16,12 +16,13 @@ export type ChartType =
   | 'donut'
   | 'area'
   | 'treemap'
+  | 'table'
   | 'growth_progression'
   | 'spatial_effectiveness'
   | 'phase_comparison'
   | 'environmental_correlation';
 
-export type AggregationType = 'sum' | 'avg' | 'count' | 'min' | 'max' | 'median' | 'stddev' | 'distinct' | 'first' | 'last';
+export type AggregationType = 'none' | 'sum' | 'avg' | 'count' | 'min' | 'max' | 'median' | 'stddev' | 'distinct' | 'first' | 'last';
 
 export type DataType = 'string' | 'number' | 'date' | 'boolean' | 'json';
 
@@ -49,6 +50,7 @@ export interface ReportConfiguration {
   filters: Filter[];
   sorting: SortConfig[];
   segmentBy?: string[]; // Fields to segment data by for isolation filtering
+  isolationFilters?: Record<string, string[]>; // Selected values for each segment
   
   // Visualization configuration
   chartType: ChartType;

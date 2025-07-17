@@ -215,9 +215,9 @@ export const ConfigurationTrail: React.FC<ConfigurationTrailProps> = ({
                 </div>
                 
                 {/* Tooltip */}
-                <div className="absolute left-0 top-full mt-1 z-50 w-48 p-2 bg-gray-900 text-white text-xs rounded shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200">
+                <div className="absolute left-full top-0 ml-2 z-50 w-48 p-2 bg-gray-900 text-white text-xs rounded shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200">
                   {step.description}
-                  <div className="absolute -top-1 left-4 w-2 h-2 bg-gray-900 transform rotate-45"></div>
+                  <div className="absolute -left-1 top-4 w-2 h-2 bg-gray-900 transform rotate-45"></div>
                 </div>
                 
                 {step.summary && (

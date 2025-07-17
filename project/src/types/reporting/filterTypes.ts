@@ -48,6 +48,7 @@ export interface Filter {
   operator: FilterOperator;
   value: any;
   logic?: FilterLogic;
+  groupId?: string; // ID of the group this filter belongs to
   
   // Relationship configuration for cross-table filtering
   relationshipPath?: RelationshipPath[];

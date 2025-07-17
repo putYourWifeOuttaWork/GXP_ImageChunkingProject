@@ -11,6 +11,31 @@ import {
 
 export class ReportingDataService {
   
+  // Debug helper to log SQL queries
+  private static logQuery(query: any, operation: string): void {
+    console.group(`🔍 SQL Query Debug - ${operation}`);
+    console.log('Operation:', operation);
+    console.log('Timestamp:', new Date().toISOString());
+    
+    // Try to extract query details from Supabase query builder
+    if (query && typeof query === 'object') {
+      // Log the URL if available (for debugging)
+      if (query.url) {
+        console.log('Query URL:', query.url.href || query.url);
+      }
+      
+      // Log method and headers
+      if (query.method) {
+        console.log('Method:', query.method);
+      }
+      
+      // For select queries, try to show the constructed query
+      console.log('Query Object:', query);
+    }
+    
+    console.groupEnd();
+  }
+  
   // Clear all cached query results
   static clearAllCaches(): void {
     try {
@@ -48,10 +73,6 @@ export class ReportingDataService {
         
         if (error) {
           console.error(`Error fetching columns for ${dataSource.table}:`, error);
-          if (error.message?.includes('404') || error.message?.includes('not found')) {
-            console.warn('get_table_columns RPC function not found. Please run the following migration:');
-            console.warn('psql $DATABASE_URL < migrations/20250710_add_get_table_columns_function.sql');
-          }
           // Fallback to predefined fields if RPC query fails
           tableColumns[dataSource.table] = dataSource.fields.map(field => ({
             name: field.name,
@@ -100,629 +121,21 @@ export class ReportingDataService {
       'real': 'numeric',
       'double precision': 'numeric',
       'boolean': 'boolean',
-      'timestamp with time zone': 'timestamp',
-      'timestamp without time zone': 'timestamp',
+      'timestamp with time zone': 'datetime',
+      'timestamp without time zone': 'datetime',
       'date': 'date',
-      'uuid': 'uuid',
-      'jsonb': 'json',
-      'json': 'json'
+      'uuid': 'text'
     };
     
     return typeMap[pgType] || 'text';
   }
   
-  // Convert snake_case to Display Name
+  // Format column names for display
   private static formatDisplayName(columnName: string): string {
     return columnName
       .split('_')
       .map(word => word.charAt(0).toUpperCase() + word.slice(1))
       .join(' ');
-  }
-  
-  // Available data sources for agricultural reporting
-  static getAvailableDataSources(): DataSource[] {
-    return [
-      {
-        id: 'petri_observations',
-        name: 'Petri Observations',
-        description: 'Petri dish growth observations and measurements',
-        schema: 'public',
-        table: 'petri_observations_partitioned', // Always use partitioned table
-        joinable: true,
-        isPartitioned: true,
-        partitionKeys: ['program_id', 'site_id', 'submission_id'],
-        fields: [
-          { name: 'observation_id', type: 'uuid', displayName: 'Observation ID' },
-          { name: 'submission_id', type: 'uuid', displayName: 'Submission ID' },
-          { name: 'program_id', type: 'uuid', displayName: 'Program ID' },
-          { name: 'site_id', type: 'uuid', displayName: 'Site ID' },
-          { name: 'petri_code', type: 'text', displayName: 'Petri Code' },
-          { name: 'fungicide_used', type: 'enum', displayName: 'Fungicide Used', 
-            enumValues: ['Yes', 'No'] },
-          { name: 'petri_growth_stage', type: 'enum', displayName: 'Growth Stage',
-            enumValues: ['None', 'Trace', 'Very Low', 'Low', 'Moderate', 'Moderately High', 'High', 'Very High', 'Hazardous', 'TNTC Overrun'] },
-          { name: 'growth_index', type: 'numeric', displayName: 'Growth Index' },
-          { name: 'growth_progression', type: 'numeric', displayName: 'Growth Progression' },
-          { name: 'growth_aggression', type: 'numeric', displayName: 'Growth Aggression' },
-          { name: 'growth_velocity', type: 'numeric', displayName: 'Growth Velocity' },
-          { name: 'placement', type: 'enum', displayName: 'Placement',
-            enumValues: ['P1', 'P2', 'P3', 'P4', 'P5', 'S1', 'R1'] }, // Based on your actual data
-          { name: 'outdoor_temperature', type: 'numeric', displayName: 'Outdoor Temperature' },
-          { name: 'outdoor_humidity', type: 'numeric', displayName: 'Outdoor Humidity' },
-          { name: 'todays_day_of_phase', type: 'integer', displayName: 'Day of Phase' },
-          { name: 'x_position', type: 'numeric', displayName: 'X Position' },
-          { name: 'y_position', type: 'numeric', displayName: 'Y Position' },
-          { name: 'created_at', type: 'timestamp', displayName: 'Created Date' },
-          { name: 'updated_at', type: 'timestamp', displayName: 'Updated Date' }
-        ]
-      },
-      {
-        id: 'gasifier_observations',
-        name: 'Gasifier Observations',
-        description: 'Gasifier placement and effectiveness data',
-        schema: 'public',
-        table: 'gasifier_observations_partitioned', // Always use partitioned table
-        joinable: true,
-        isPartitioned: true,
-        partitionKeys: ['program_id', 'site_id', 'submission_id'],
-        fields: [
-          { name: 'observation_id', type: 'uuid', displayName: 'Observation ID' },
-          { name: 'submission_id', type: 'uuid', displayName: 'Submission ID' },
-          { name: 'program_id', type: 'uuid', displayName: 'Program ID' },
-          { name: 'site_id', type: 'uuid', displayName: 'Site ID' },
-          { name: 'placement_x', type: 'numeric', displayName: 'X Position' },
-          { name: 'placement_y', type: 'numeric', displayName: 'Y Position' },
-          { name: 'effectiveness_score', type: 'numeric', displayName: 'Effectiveness Score' },
-          { name: 'created_at', type: 'timestamp', displayName: 'Created Date' }
-        ]
-      },
-      {
-        id: 'submissions',
-        name: 'Environmental Submissions',
-        description: 'Environmental conditions and submission data',
-        schema: 'public',
-        table: 'submissions',
-        joinable: true,
-        fields: [
-          { name: 'submission_id', type: 'uuid', displayName: 'Submission ID' },
-          { name: 'site_id', type: 'uuid', displayName: 'Site ID' },
-          { name: 'program_id', type: 'uuid', displayName: 'Program ID' },
-          { name: 'temperature', type: 'numeric', displayName: 'Temperature (°F)' },
-          { name: 'humidity', type: 'numeric', displayName: 'Humidity (%)' },
-          { name: 'indoor_temperature', type: 'numeric', displayName: 'Indoor Temperature (°F)' },
-          { name: 'indoor_humidity', type: 'numeric', displayName: 'Indoor Humidity (%)' },
-          { name: 'airflow', type: 'text', displayName: 'Airflow' },
-          { name: 'weather', type: 'text', displayName: 'Weather' },
-          { name: 'created_at', type: 'timestamp', displayName: 'Created Date' }
-        ]
-      },
-      {
-        id: 'sites',
-        name: 'Sites',
-        description: 'Research site information',
-        schema: 'public',
-        table: 'sites',
-        joinable: true,
-        fields: [
-          { name: 'site_id', type: 'uuid', displayName: 'Site ID' },
-          { name: 'program_id', type: 'uuid', displayName: 'Program ID' },
-          { name: 'site_name', type: 'text', displayName: 'Site Name' },
-          { name: 'latitude', type: 'numeric', displayName: 'Latitude' },
-          { name: 'longitude', type: 'numeric', displayName: 'Longitude' },
-          { name: 'created_at', type: 'timestamp', displayName: 'Created Date' }
-        ]
-      },
-      {
-        id: 'pilot_programs',
-        name: 'Pilot Programs',
-        description: 'Research program information',
-        schema: 'public',
-        table: 'pilot_programs',
-        joinable: true,
-        fields: [
-          { name: 'program_id', type: 'uuid', displayName: 'Program ID' },
-          { name: 'company_id', type: 'uuid', displayName: 'Company ID' },
-          { name: 'program_name', type: 'text', displayName: 'Program Name' },
-          { name: 'status', type: 'text', displayName: 'Status' },
-          { name: 'start_date', type: 'date', displayName: 'Start Date' },
-          { name: 'end_date', type: 'date', displayName: 'End Date' },
-          { name: 'created_at', type: 'timestamp', displayName: 'Created Date' }
-        ]
-      }
-    ];
-  }
-
-  // Get available dimensions for selected data sources
-  static getAvailableDimensions(dataSources: DataSource[]): Dimension[] {
-    const dimensions: Dimension[] = [];
-    
-    dataSources.forEach(source => {
-      // Use the fields that match selectedFields if available, otherwise use all fields
-      const fieldsToUse = source.selectedFields && source.selectedFields.length > 0
-        ? source.fields.filter(field => source.selectedFields!.includes(field.name))
-        : source.fields;
-      
-      fieldsToUse.forEach(field => {
-        if (['text', 'enum', 'date', 'timestamp'].includes(field.type)) {
-          dimensions.push({
-            id: `${source.id}.${field.name}`,
-            name: field.name,
-            displayName: field.displayName,
-            dataType: field.type,
-            source: source.id,
-            field: field.name,
-            granularity: field.type === 'timestamp' ? 'day' : undefined,
-            enumValues: (field as any).enumValues // Add enum values if available
-          });
-        }
-      });
-    });
-
-    // Add dimensions from related tables for observation tables
-    const hasObservationTable = dataSources.some(source => 
-      source.table.includes('petri_observations') || source.table.includes('gasifier_observations')
-    );
-    
-    if (hasObservationTable) {
-      const mainSource = dataSources.find(source => 
-        source.table.includes('petri_observations') || source.table.includes('gasifier_observations')
-      );
-      
-      if (mainSource) {
-        // Add site dimensions if sites table is selected
-        const hasSitesTable = dataSources.some(source => source.table === 'sites');
-        if (hasSitesTable) {
-          dimensions.push({
-            id: 'sites.name',
-            name: 'site_name',
-            displayName: 'Site Name',
-            dataType: 'text',
-            source: mainSource.id,
-            field: 'name',
-            dataSource: 'sites'
-          } as any);
-        }
-        
-        // Add program dimensions if pilot_programs table is selected
-        const hasProgramsTable = dataSources.some(source => source.table === 'pilot_programs');
-        if (hasProgramsTable) {
-          dimensions.push({
-            id: 'pilot_programs.name',
-            name: 'program_name',
-            displayName: 'Program Name',
-            dataType: 'text',
-            source: mainSource.id,
-            field: 'name',
-            dataSource: 'pilot_programs'
-          } as any);
-        }
-        
-        // Add submission dimensions if submissions table is selected
-        const hasSubmissionsTable = dataSources.some(source => source.table === 'submissions');
-        if (hasSubmissionsTable) {
-          dimensions.push(
-            {
-              id: 'submissions.created_at',
-              name: 'submission_date',
-              displayName: 'Submission Date',
-              dataType: 'timestamp',
-              source: mainSource.id,
-              field: 'created_at',
-              dataSource: 'submissions',
-              granularity: 'day'
-            } as any,
-            {
-              id: 'submissions.weather',
-              name: 'weather',
-              displayName: 'Weather',
-              dataType: 'text',
-              source: mainSource.id,
-              field: 'weather',
-              dataSource: 'submissions'
-            } as any
-          );
-        }
-      }
-    }
-
-    // Add computed dimensions
-    dimensions.push(
-      {
-        id: 'date_created_week',
-        name: 'created_week',
-        displayName: 'Week Created',
-        dataType: 'date',
-        source: 'computed',
-        field: 'DATE_TRUNC(\'week\', created_at)',
-        granularity: 'week'
-      },
-      {
-        id: 'date_created_month',
-        name: 'created_month',
-        displayName: 'Month Created',
-        dataType: 'date',
-        source: 'computed',
-        field: 'DATE_TRUNC(\'month\', created_at)',
-        granularity: 'month'
-      }
-    );
-
-    return dimensions;
-  }
-
-  // Get available filter fields from selected data sources (dynamic schema-based)
-  static async getAvailableFilterFields(dataSources: DataSource[]): Promise<Array<{ id: string; name: string; displayName: string; dataType: string; source: string; field: string; relationshipPath?: RelationshipPath[]; targetTable?: string; }>> {
-    const filterFields: Array<{ id: string; name: string; displayName: string; dataType: string; source: string; field: string; relationshipPath?: RelationshipPath[]; targetTable?: string; }> = [];
-    
-    try {
-      const tableColumns = await this.getTableColumns(dataSources);
-      
-      dataSources.forEach(source => {
-        const columns = tableColumns[source.table] || [];
-        
-        columns.forEach(column => {
-          // All columns can be used for filtering
-          filterFields.push({
-            id: `${source.id}.${column.name}`,
-            name: column.name,
-            displayName: `${column.displayName} (${source.name})`,
-            dataType: column.type,
-            source: source.id,
-            field: column.name
-          });
-        });
-      });
-      
-      // Add related table fields based on the main data source
-      const mainSource = dataSources[0];
-      if (mainSource) {
-        // Add pilot_programs fields if we're looking at observations or submissions
-        if (mainSource.table.includes('petri_observations') || mainSource.table.includes('gasifier_observations')) {
-          // Add program fields
-          const programFields = [
-            { name: 'start_date', displayName: 'Program Start Date', dataType: 'date' },
-            { name: 'end_date', displayName: 'Program End Date', dataType: 'date' },
-            { name: 'name', displayName: 'Program Name', dataType: 'text' },
-            { name: 'phase_type', displayName: 'Program Phase Type', dataType: 'text' }
-          ];
-          
-          programFields.forEach(field => {
-            // For partitioned tables, we can join directly to pilot_programs
-            const isPartitioned = mainSource.table.includes('_partitioned');
-            const relationshipPath = isPartitioned
-              ? [{ fromTable: mainSource.table, toTable: 'pilot_programs', joinField: 'program_id', foreignField: 'program_id', joinType: 'INNER' }]
-              : [
-                  { fromTable: mainSource.table, toTable: 'submissions', joinField: 'submission_id', foreignField: 'submission_id', joinType: 'INNER' },
-                  { fromTable: 'submissions', toTable: 'sites', joinField: 'site_id', foreignField: 'site_id', joinType: 'INNER' },
-                  { fromTable: 'sites', toTable: 'pilot_programs', joinField: 'program_id', foreignField: 'program_id', joinType: 'INNER' }
-                ];
-            
-            filterFields.push({
-              id: `pilot_programs.${field.name}`,
-              name: field.name,
-              displayName: `${field.displayName} (Related: Programs)`,
-              dataType: field.dataType,
-              source: mainSource.id,
-              field: field.name,
-              targetTable: 'pilot_programs',
-              relationshipPath
-            });
-          });
-          
-          // Add site fields
-          const siteFields = [
-            { name: 'name', displayName: 'Site Name', dataType: 'text' },
-            { name: 'gasifier_deployment_date', displayName: 'Site Gasifier Deployment Date', dataType: 'date' }
-          ];
-          
-          siteFields.forEach(field => {
-            // For partitioned tables, we already have site_id directly
-            const isPartitioned = mainSource.table.includes('_partitioned');
-            const relationshipPath = isPartitioned
-              ? [{ fromTable: mainSource.table, toTable: 'sites', joinField: 'site_id', foreignField: 'site_id', joinType: 'INNER' }]
-              : [
-                  { fromTable: mainSource.table, toTable: 'submissions', joinField: 'submission_id', foreignField: 'submission_id', joinType: 'INNER' },
-                  { fromTable: 'submissions', toTable: 'sites', joinField: 'site_id', foreignField: 'site_id', joinType: 'INNER' }
-                ];
-            
-            filterFields.push({
-              id: `sites.${field.name}`,
-              name: field.name,
-              displayName: `${field.displayName} (Related: Sites)`,
-              dataType: field.dataType,
-              source: mainSource.id,
-              field: field.name,
-              targetTable: 'sites',
-              relationshipPath
-            });
-          });
-          
-          // Add submission fields
-          const submissionFields = [
-            { name: 'created_at', displayName: 'Submission Date', dataType: 'timestamp' },
-            { name: 'outdoor_temperature', displayName: 'Submission Temperature', dataType: 'number' },
-            { name: 'outdoor_humidity', displayName: 'Submission Humidity', dataType: 'number' },
-            { name: 'weather', displayName: 'Submission Weather', dataType: 'text' }
-          ];
-          
-          submissionFields.forEach(field => {
-            // Partitioned tables can join directly to submissions using submission_id
-            const isPartitioned = mainSource.table.includes('_partitioned');
-            const relationshipPath = [
-              { fromTable: mainSource.table, toTable: 'submissions', joinField: 'submission_id', foreignField: 'submission_id', joinType: 'INNER' }
-            ];
-            
-            filterFields.push({
-              id: `submissions.${field.name}`,
-              name: field.name,
-              displayName: `${field.displayName} (Related: Submissions)`,
-              dataType: field.dataType,
-              source: mainSource.id,
-              field: field.name,
-              targetTable: 'submissions',
-              relationshipPath
-            });
-          });
-        }
-        
-        // Add related fields for submissions table
-        if (mainSource.table === 'submissions') {
-          // Add program fields
-          const programFields = [
-            { name: 'start_date', displayName: 'Program Start Date', dataType: 'date' },
-            { name: 'end_date', displayName: 'Program End Date', dataType: 'date' },
-            { name: 'name', displayName: 'Program Name', dataType: 'text' }
-          ];
-          
-          programFields.forEach(field => {
-            filterFields.push({
-              id: `pilot_programs.${field.name}`,
-              name: field.name,
-              displayName: `${field.displayName} (Related: Programs)`,
-              dataType: field.dataType,
-              source: mainSource.id,
-              field: field.name,
-              targetTable: 'pilot_programs',
-              relationshipPath: [
-                { fromTable: 'submissions', toTable: 'sites', joinField: 'site_id', foreignField: 'site_id', joinType: 'INNER' },
-                { fromTable: 'sites', toTable: 'pilot_programs', joinField: 'program_id', foreignField: 'program_id', joinType: 'INNER' }
-              ]
-            });
-          });
-          
-          // Add site fields
-          const siteFields = [
-            { name: 'name', displayName: 'Site Name', dataType: 'text' }
-          ];
-          
-          siteFields.forEach(field => {
-            filterFields.push({
-              id: `sites.${field.name}`,
-              name: field.name,
-              displayName: `${field.displayName} (Related: Sites)`,
-              dataType: field.dataType,
-              source: mainSource.id,
-              field: field.name,
-              targetTable: 'sites',
-              relationshipPath: [
-                { fromTable: 'submissions', toTable: 'sites', joinField: 'site_id', foreignField: 'site_id', joinType: 'INNER' }
-              ]
-            });
-          });
-        }
-      }
-    } catch (error) {
-      console.error('Error getting dynamic filter fields, falling back to predefined:', error);
-      
-      // Fallback to predefined fields if dynamic discovery fails
-      dataSources.forEach(source => {
-        source.fields.forEach(field => {
-          filterFields.push({
-            id: `${source.id}.${field.name}`,
-            name: field.name,
-            displayName: `${field.displayName} (${source.name})`,
-            dataType: field.type,
-            source: source.id,
-            field: field.name
-          });
-        });
-      });
-    }
-    
-    console.log('Available filter fields:', filterFields.length, filterFields.slice(0, 5));
-    return filterFields;
-  }
-
-  // Build JOIN clauses for cross-table filtering
-  private static buildJoinClausesForFilters(filters: Filter[], mainTable: string): { 
-    joins: string[], 
-    requiredTables: Set<string> 
-  } {
-    const requiredTables = new Set<string>([mainTable]);
-    const joins: string[] = [];
-    const processedJoins = new Set<string>();
-
-    filters.forEach(filter => {
-      if (filter.relationshipPath && filter.relationshipPath.length > 0) {
-        // Build the join path for this filter
-        filter.relationshipPath.forEach(path => {
-          const joinKey = `${path.fromTable}-${path.toTable}`;
-          
-          if (!processedJoins.has(joinKey)) {
-            requiredTables.add(path.fromTable);
-            requiredTables.add(path.toTable);
-            
-            const joinType = path.joinType || 'INNER';
-            joins.push(
-              `${joinType} JOIN ${path.toTable} ON ${path.fromTable}.${path.joinField} = ${path.toTable}.${path.foreignField}`
-            );
-            
-            processedJoins.add(joinKey);
-          }
-        });
-      }
-    });
-
-    return { joins, requiredTables };
-  }
-
-  // Build filter clause with table prefixes for cross-table queries
-  private static buildFilterClauseWithTable(filter: Filter): string {
-    const { field, operator, value, targetTable } = filter;
-    const fieldWithTable = targetTable ? `${targetTable}.${field}` : field;
-    
-    switch (operator) {
-      case 'equals':
-        return `${fieldWithTable} = '${value}'`;
-      case 'not_equals':
-        return `${fieldWithTable} != '${value}'`;
-      case 'greater_than':
-        return `${fieldWithTable} > ${value}`;
-      case 'less_than':
-        return `${fieldWithTable} < ${value}`;
-      case 'greater_than_or_equal':
-        return `${fieldWithTable} >= ${value}`;
-      case 'less_than_or_equal':
-        return `${fieldWithTable} <= ${value}`;
-      case 'contains':
-        return `${fieldWithTable} ILIKE '%${value}%'`;
-      case 'not_contains':
-        return `${fieldWithTable} NOT ILIKE '%${value}%'`;
-      case 'starts_with':
-        return `${fieldWithTable} ILIKE '${value}%'`;
-      case 'ends_with':
-        return `${fieldWithTable} ILIKE '%${value}'`;
-      case 'in':
-        const values = Array.isArray(value) ? value : [value];
-        return `${fieldWithTable} IN (${values.map(v => `'${v}'`).join(', ')})`;
-      case 'not_in':
-        const notInValues = Array.isArray(value) ? value : [value];
-        return `${fieldWithTable} NOT IN (${notInValues.map(v => `'${v}'`).join(', ')})`;
-      case 'is_null':
-        return `${fieldWithTable} IS NULL`;
-      case 'is_not_null':
-        return `${fieldWithTable} IS NOT NULL`;
-      case 'between':
-        // Handle date range format "startDate,endDate"
-        if (typeof value === 'string' && value.includes(',')) {
-          const [start, end] = value.split(',');
-          return `${fieldWithTable} BETWEEN '${start}' AND '${end}'`;
-        }
-        // Handle array format [start, end]
-        if (Array.isArray(value) && value.length === 2) {
-          return `${fieldWithTable} BETWEEN ${value[0]} AND ${value[1]}`;
-        }
-        return `${fieldWithTable} = '${value}'`;
-      case 'range':
-        if (typeof value === 'string' && value.includes(',')) {
-          const [min, max] = value.split(',');
-          return `${fieldWithTable} >= ${min} AND ${fieldWithTable} <= ${max}`;
-        }
-        return `${fieldWithTable} = '${value}'`;
-      default:
-        console.warn(`Unknown filter operator: ${operator}, defaulting to equals`);
-        return `${fieldWithTable} = '${value}'`;
-    }
-  }
-
-  // Execute raw SQL query for complex cross-table filtering
-  private static async executeRawQuery(sql: string): Promise<any[]> {
-    try {
-      const { data, error } = await supabase.rpc('execute_raw_sql', { query: sql });
-      
-      if (error) {
-        console.error('Raw SQL query error:', error);
-        // If RPC function doesn't exist, fall back to returning empty data
-        if (error.message?.includes('404') || error.message?.includes('not found')) {
-          console.warn('execute_raw_sql RPC function not found. Please run the following migration:');
-          console.warn('psql $DATABASE_URL < migrations/20250710_add_execute_raw_sql_function.sql');
-          return [];
-        }
-        throw error;
-      }
-      
-      return data || [];
-    } catch (error) {
-      console.error('Failed to execute raw SQL query:', error);
-      // Return empty array instead of throwing to prevent app crash
-      return [];
-    }
-  }
-
-  // Get available measures for selected data sources
-  static getAvailableMeasures(dataSources: DataSource[]): Measure[] {
-    const measures: Measure[] = [];
-    
-    dataSources.forEach(source => {
-      // Use the fields that match selectedFields if available, otherwise use all fields
-      const fieldsToUse = source.selectedFields && source.selectedFields.length > 0
-        ? source.fields.filter(field => source.selectedFields!.includes(field.name))
-        : source.fields;
-      
-      fieldsToUse.forEach(field => {
-        if (['numeric', 'integer'].includes(field.type)) {
-          // Add basic aggregations for numeric fields
-          ['sum', 'avg', 'min', 'max', 'count'].forEach(agg => {
-            measures.push({
-              id: `${source.id}.${field.name}.${agg}`,
-              name: `${field.name}_${agg}`,
-              displayName: `${field.displayName} (${agg.toUpperCase()})`,
-              dataType: 'numeric',
-              source: source.id,
-              field: field.name,
-              aggregation: agg as any,
-              expression: agg === 'count' ? `COUNT(${field.name})` : `${agg.toUpperCase()}(${field.name})`
-            });
-          });
-        }
-      });
-    });
-
-    // Add computed measures
-    measures.push(
-      {
-        id: 'total_records',
-        name: 'total_records',
-        displayName: 'Total Records',
-        dataType: 'numeric',
-        source: 'computed',
-        field: '*',
-        aggregation: 'count',
-        expression: 'COUNT(*)'
-      },
-      {
-        id: 'avg_growth_rate',
-        name: 'avg_growth_rate',
-        displayName: 'Average Growth Rate',
-        dataType: 'numeric',
-        source: 'computed',
-        field: 'growth_percentage',
-        aggregation: 'avg',
-        expression: 'AVG(growth_percentage)'
-      }
-    );
-    
-    // Add days in program phase measure for observation tables
-    const hasObservationTable = dataSources.some(source => 
-      source.table.includes('petri_observations') || source.table.includes('gasifier_observations')
-    );
-    
-    if (hasObservationTable) {
-      measures.push({
-        id: 'days_in_program_phase',
-        name: 'days_in_program_phase',
-        displayName: 'Days in Program Phase',
-        dataType: 'numeric',
-        source: 'computed',
-        field: 'EXTRACT(day FROM pilot_programs.end_date - pilot_programs.start_date)',
-        aggregation: 'max',
-        expression: 'MAX(EXTRACT(day FROM pilot_programs.end_date - pilot_programs.start_date))',
-        requiresJoin: true,
-        requiredTable: 'pilot_programs'
-      } as any);
-    }
-
-    return measures;
   }
 
   // Execute report query and return aggregated data
@@ -730,739 +143,508 @@ export class ReportingDataService {
     const startTime = Date.now();
     
     try {
-      // Build SQL query based on config
-      const query = this.buildQuery(config);
-      console.log('Executing report query:', query);
+      console.log('Executing report with config:', config);
       console.log('SegmentBy fields:', config.segmentBy);
       
-      // Execute a simple test query to check what data is actually available
-      console.log('DEBUG: Testing what data is available...');
-      try {
-        const testQuery = `
-          SELECT 
-            po.site_id as po_site_id,
-            s.site_id as s_site_id, 
-            s.site_name as s_site_name,
-            po.submission_id as po_submission_id,
-            sub.submission_id as sub_submission_id,
-            sub.global_submission_id as sub_global_submission_id
-          FROM petri_observations_partitioned po 
-          LEFT JOIN sites s ON po.site_id = s.site_id 
-          LEFT JOIN submissions sub ON po.submission_id = sub.submission_id
-          LIMIT 3
-        `;
-        const { data: testData, error: testError } = await supabase.rpc('execute_raw_sql_safe', { 
-          query_text: testQuery 
+      // IMPORTANT: Always use direct query to get raw records
+      // Segmentation is visual (color coding), NOT SQL GROUP BY
+      // Aggregation will be handled in frontend to preserve all data including image_urls
+      
+      console.log('Always using direct query for raw records with segmentation:', config.segmentBy);
+      
+      // Direct query path - get full records including image_url for eye icon functionality
+      return await this.executeDirectQuery(config, startTime);
+      
+    } catch (error) {
+      console.error('Error executing report:', error);
+      console.log('Falling back to sample data due to error');
+      return this.getSampleData(config);
+    }
+  }
+
+  // Execute direct query for full records
+  private static async executeDirectQuery(config: ReportConfig, startTime: number): Promise<AggregatedData> {
+    console.log('Executing direct query for full records');
+    
+    // Use the primary data source if one is designated, otherwise use the first one
+    let mainSource = config.dataSources.find(ds => ds.isPrimary) || config.dataSources[0];
+    
+    if (!mainSource) {
+      throw new Error('No data source configured');
+    }
+    
+    console.log('Using main source for direct query:', mainSource.name, 'Table:', mainSource.table);
+    console.log('All data sources:', config.dataSources.map(ds => ({ name: ds.name, table: ds.table, isPrimary: ds.isPrimary })));
+
+    // First, let's try to get the actual table schema to avoid column errors
+    console.log('Checking table schema for:', mainSource.table);
+    try {
+      const { data: schemaData, error: schemaError } = await supabase
+        .rpc('get_table_columns', { table_name: mainSource.table });
+      
+      if (schemaData && schemaData.length > 0) {
+        const availableColumns = schemaData.map((col: any) => col.column_name);
+        console.log('Available columns in', mainSource.table, ':', availableColumns);
+      }
+    } catch (schemaError) {
+      console.log('Could not fetch schema, proceeding with predefined fields');
+    }
+
+    // Build select fields including all important metadata
+    const selectFields = [];
+    
+    // Add dimension fields
+    config.dimensions.forEach(dim => {
+      selectFields.push(dim.field);
+    });
+    
+    // Add measure fields  
+    config.measures.forEach(measure => {
+      selectFields.push(measure.field);
+    });
+    
+    // Add segment fields if any
+    if (config.segmentBy && config.segmentBy.length > 0) {
+      config.segmentBy.forEach(segment => {
+        if (!selectFields.includes(segment)) {
+          selectFields.push(segment);
+        }
+      });
+    }
+    
+    // Always include key fields for drill-down and image display
+    const commonKeyFields = ['submission_id', 'site_id', 'program_id', 'image_url', 'created_at'];
+    const gasifierKeyFields = ['gasifier_code', 'flow_rate', 'linear_reading'];
+    const petriKeyFields = ['petri_code', 'growth_index', 'placement', 'updated_at'];
+    
+    // Add common key fields
+    commonKeyFields.forEach(field => {
+      if (!selectFields.includes(field)) {
+        selectFields.push(field);
+      }
+    });
+    
+    // Add table-specific key fields based on the main source
+    if (mainSource.table.includes('gasifier')) {
+      gasifierKeyFields.forEach(field => {
+        if (!selectFields.includes(field)) {
+          selectFields.push(field);
+        }
+      });
+    } else if (mainSource.table.includes('petri')) {
+      petriKeyFields.forEach(field => {
+        if (!selectFields.includes(field)) {
+          selectFields.push(field);
+        }
+      });
+    }
+
+    console.log('Direct query selecting fields:', selectFields);
+    
+    // Try a simple test query first to verify table access
+    console.log('Testing basic table access...');
+    try {
+      const { data: testData, error: testError } = await supabase
+        .from(mainSource.table)
+        .select('*')
+        .limit(1);
+      
+      if (testError) {
+        console.error('Basic table access failed:', testError);
+        throw testError;
+      }
+      
+      if (testData && testData.length > 0) {
+        console.log('Table access successful. Sample columns:', Object.keys(testData[0]));
+        
+        // Filter our select fields to only include columns that actually exist
+        const actualColumns = Object.keys(testData[0]);
+        const validSelectFields = selectFields.filter(field => actualColumns.includes(field));
+        const invalidFields = selectFields.filter(field => !actualColumns.includes(field));
+        
+        if (invalidFields.length > 0) {
+          console.warn('Removing invalid fields:', invalidFields);
+        }
+        
+        console.log('Valid select fields:', validSelectFields);
+        
+        // Use only valid fields for the actual query
+        if (validSelectFields.length === 0) {
+          console.warn('No valid fields found, using all available columns');
+          validSelectFields.push('*');
+        }
+        
+        // Build select with nested relationships for segment names
+        let selectString = validSelectFields.join(', ');
+        
+        // Add nested selects for segment data if segments are requested
+        if (config.segmentBy && config.segmentBy.length > 0) {
+          const nestedSelects: string[] = [];
+          
+          if (config.segmentBy.includes('program_id') && validSelectFields.includes('program_id')) {
+            nestedSelects.push('pilot_programs!program_id(program_id,name,start_date,end_date)');
+          }
+          
+          if (config.segmentBy.includes('site_id') && validSelectFields.includes('site_id')) {
+            nestedSelects.push('sites!site_id(site_id,name,site_code)');
+          }
+          
+          if (config.segmentBy.includes('submission_id') && validSelectFields.includes('submission_id')) {
+            nestedSelects.push('submissions!submission_id(submission_id,global_submission_id)');
+          }
+          
+          if (nestedSelects.length > 0) {
+            selectString = `${selectString}, ${nestedSelects.join(', ')}`;
+          }
+        }
+        
+        console.log('Select string with nested relationships:', selectString);
+        
+        var query = supabase
+          .from(mainSource.table)
+          .select(selectString);
+          
+        // Store actual columns for filter validation
+        var actualTableColumns = actualColumns;
+      }
+    } catch (testError) {
+      console.error('Table test failed, falling back to sample data:', testError);
+      return this.getSampleData(config);
+    }
+    
+    if (!query) {
+      // Build select with nested relationships for segment names
+      let selectString = selectFields.join(', ');
+      
+      // Add nested selects for segment data if segments are requested
+      if (config.segmentBy && config.segmentBy.length > 0) {
+        const nestedSelects: string[] = [];
+        
+        if (config.segmentBy.includes('program_id') && selectFields.includes('program_id')) {
+          nestedSelects.push('pilot_programs!program_id(program_id,name,start_date,end_date)');
+        }
+        
+        if (config.segmentBy.includes('site_id') && selectFields.includes('site_id')) {
+          nestedSelects.push('sites!site_id(site_id,name,site_code)');
+        }
+        
+        if (config.segmentBy.includes('submission_id') && selectFields.includes('submission_id')) {
+          nestedSelects.push('submissions!submission_id(submission_id,global_submission_id)');
+        }
+        
+        if (nestedSelects.length > 0) {
+          selectString = `${selectString}, ${nestedSelects.join(', ')}`;
+        }
+      }
+      
+      var query = supabase
+        .from(mainSource.table)
+        .select(selectString);
+      var actualTableColumns: string[] = [];
+    }
+
+    // Apply filters - only those that belong to the current table
+    if (config.filters && config.filters.length > 0) {
+      // Filter out filters that don't belong to the current table
+      // Only use actual table columns, not configured fields
+      const actualColumns = actualTableColumns || [];
+      const applicableFilters = config.filters.filter(filter => 
+        actualColumns.includes(filter.field)
+      );
+      
+      console.log('Applying filters:', applicableFilters);
+      console.log('Skipping filters not in table:', config.filters.filter(f => !applicableFilters.includes(f)));
+      
+      applicableFilters.forEach(filter => {
+        if (filter.field && filter.operator && filter.value) {
+          console.log(`Applying filter: ${filter.field} ${filter.operator} ${filter.value}`);
+          
+          switch (filter.operator) {
+            case 'equals':
+              query = query.eq(filter.field, filter.value);
+              break;
+            case 'not_equals':
+              query = query.neq(filter.field, filter.value);
+              break;
+            case 'contains':
+              query = query.ilike(filter.field, `%${filter.value}%`);
+              break;
+            case 'not_contains':
+              query = query.not(filter.field, 'ilike', `%${filter.value}%`);
+              break;
+            case 'greater_than':
+              query = query.gt(filter.field, filter.value);
+              break;
+            case 'less_than':
+              query = query.lt(filter.field, filter.value);
+              break;
+            default:
+              query = query.eq(filter.field, filter.value);
+          }
+        }
+      });
+    }
+
+    // Apply isolation filters if present
+    if (config.isolationFilters && Object.keys(config.isolationFilters).length > 0) {
+      console.log('Applying isolation filters:', config.isolationFilters);
+      
+      Object.entries(config.isolationFilters).forEach(([field, values]) => {
+        if (values && values.length > 0) {
+          // Use 'in' operator for multiple values
+          query = query.in(field, values);
+          console.log(`Applied isolation filter: ${field} IN (${values.join(', ')})`);
+        }
+      });
+    }
+
+    // Execute query
+    console.log('Executing Supabase query...');
+    console.log('Query details:', {
+      table: mainSource.table,
+      selectFields: selectFields,
+      filters: config.filters,
+      segmentBy: config.segmentBy
+    });
+    
+    // Log the query for debugging
+    this.logQuery(query, 'Direct Query');
+    
+    const { data, error } = await query.limit(500);
+    
+    if (error) {
+      console.error('Direct query error:', error);
+      console.error('Error details:', {
+        code: error.code,
+        message: error.message,
+        hint: error.hint,
+        details: error.details
+      });
+      console.error('Failed query was selecting:', selectFields);
+      console.error('From table:', mainSource.table);
+      throw error;
+    }
+
+    console.log('Direct query results:', data?.length, 'records');
+    console.log('Sample record:', data?.[0]);
+
+    if (!data || data.length === 0) {
+      console.log('No data returned, using sample data');
+      return this.getSampleData(config);
+    }
+    
+    // Warn if too many records
+    if (data.length > 500) {
+      console.warn(`⚠️ Large dataset detected: ${data.length} records returned.`);
+      console.warn('Consider reducing the number of fields or adding filters to improve performance.');
+      console.warn('Tip: Remove unnecessary dimensions or measures in the Data Sources step.');
+    }
+
+    // Process data into the expected format
+    const processedData = data.map(row => {
+      // Extract segment values and their display names
+      const segmentData: any = {};
+      const segmentMetadata: any = {};
+      
+      if (config.segmentBy && config.segmentBy.length > 0) {
+        config.segmentBy.forEach(segment => {
+          segmentData[`segment_${segment}`] = row[segment];
+          
+          // Extract nested relationship data for display names
+          if (segment === 'program_id' && row.pilot_programs) {
+            segmentMetadata[`${segment}_name`] = row.pilot_programs.name;
+            segmentMetadata[`${segment}_start_date`] = row.pilot_programs.start_date;
+            segmentMetadata[`${segment}_end_date`] = row.pilot_programs.end_date;
+          } else if (segment === 'site_id' && row.sites) {
+            segmentMetadata[`${segment}_name`] = row.sites.name;
+            segmentMetadata[`${segment}_code`] = row.sites.site_code;
+          } else if (segment === 'submission_id' && row.submissions) {
+            segmentMetadata[`${segment}_global`] = row.submissions.global_submission_id;
+          }
+        });
+      }
+      
+      return {
+        dimensions: this.extractDimensions(row, config.dimensions),
+        measures: this.extractMeasures(row, config.measures),
+        segments: segmentData,
+        segmentMetadata: segmentMetadata,
+        // Include full row data for image URLs and metadata
+        ...row
+      };
+    });
+
+    const executionTime = Date.now() - startTime;
+    console.log(`Direct query completed in ${executionTime}ms`);
+
+    return {
+      data: processedData,
+      totalCount: data.length,
+      filteredCount: processedData.length,
+      executionTime,
+      cacheHit: false,
+      metadata: {
+        lastUpdated: new Date().toISOString(),
+        dimensions: config.dimensions,
+        measures: config.measures,
+        filters: config.filters,
+        segments: config.segmentBy || []
+      }
+    };
+  }
+
+  // Execute aggregated query for charts
+  private static async executeAggregatedQuery(config: ReportConfig, startTime: number): Promise<AggregatedData> {
+    console.log('Executing aggregated query with segments');
+    
+    // CRITICAL: Always use observation tables as the main source, regardless of segments
+    // Segments should never change which table we query from
+    let mainSource = config.dataSources.find(ds => 
+      ds.table.includes('observations') || 
+      ds.id.includes('observations')
+    );
+    
+    // If no observation table found, use the primary source
+    if (!mainSource) {
+      mainSource = config.dataSources.find(ds => ds.isPrimary) || config.dataSources[0];
+    }
+    
+    if (!mainSource) {
+      throw new Error('No data source configured');
+    }
+    
+    console.log('Using main source for aggregated query:', mainSource.name, 'Table:', mainSource.table);
+    console.log('Segments requested:', config.segmentBy);
+
+    try {
+      // For segmented queries, we need to query the main table and get segment info
+      let query = supabase.from(mainSource.table);
+      
+      // Build select statement
+      const selectFields: string[] = [];
+      
+      // Add dimension fields
+      config.dimensions.forEach(dim => {
+        if (!selectFields.includes(dim.field)) {
+          selectFields.push(dim.field);
+        }
+      });
+      
+      // Add measure fields
+      config.measures.forEach(measure => {
+        if (!selectFields.includes(measure.field)) {
+          selectFields.push(measure.field);
+        }
+      });
+      
+      // Add segment fields
+      if (config.segmentBy) {
+        config.segmentBy.forEach(segment => {
+          if (!selectFields.includes(segment)) {
+            selectFields.push(segment);
+          }
+        });
+      }
+      
+      // Add key fields for relationships
+      const keyFields = ['submission_id', 'site_id', 'program_id'];
+      keyFields.forEach(field => {
+        if (!selectFields.includes(field) && mainSource.fields.some(f => f.name === field)) {
+          selectFields.push(field);
+        }
+      });
+      
+      console.log('Aggregated query selecting:', selectFields);
+      
+      // Validate fields exist in the table before selecting
+      const { data: testData, error: testError } = await supabase
+        .from(mainSource.table)
+        .select('*')
+        .limit(1);
+      
+      let actualColumns: string[] = [];
+      if (testData && testData.length > 0) {
+        actualColumns = Object.keys(testData[0]);
+        console.log('Actual columns in table:', actualColumns);
+        
+        const validSelectFields = selectFields.filter(field => actualColumns.includes(field));
+        const invalidFields = selectFields.filter(field => !actualColumns.includes(field));
+        
+        if (invalidFields.length > 0) {
+          console.warn('Removing invalid fields from select:', invalidFields);
+        }
+        
+        query = query.select(validSelectFields.join(', '));
+      } else {
+        // Fallback to original select if we can't validate
+        query = query.select(selectFields.join(', '));
+      }
+      
+      // Apply filters - only for fields in the main table
+      if (config.filters && config.filters.length > 0) {
+        const applicableFilters = config.filters.filter(filter => {
+          // Check if field exists in actual table columns
+          const fieldExists = actualColumns.length > 0 
+            ? actualColumns.includes(filter.field)
+            : mainSource.fields.some(f => f.name === filter.field);
+          
+          if (!fieldExists) {
+            console.warn(`Filter field '${filter.field}' not found in table '${mainSource.table}', skipping`);
+          }
+          
+          return fieldExists;
         });
         
-        console.log('DEBUG: Test query result:', testData);
-        console.log('DEBUG: Test query error:', testError);
-      } catch (e) {
-        console.log('DEBUG: Test query failed:', e);
-      }
-      
-      // Try to execute query using the custom RPC function
-      let data, error;
-      
-      // Always use direct query to get complete records with full metadata for drill-down functionality
-      const useDirectQuery = true;
-      
-      if (!useDirectQuery) {
-        try {
-          console.log('Debug executeReport: Using RPC function with config:', config);
-          
-          // Build the configuration for the RPC function
-          // Based on the database function signature, it expects a specific structure
-          const rpcConfig = {
-            entity: config.dataSources[0]?.table || 'petri_observations',
-            dimensions: config.dimensions.map(dim => dim.field), // Array of field names
-            metrics: config.measures.map(measure => ({
-              field: measure.field,
-              function: measure.aggregation.toUpperCase()
-            })),
-            filters: config.filters.map(filter => ({
-              field: filter.field,
-              operator: this.mapFilterOperator(filter.operator),
-              value: filter.value
-            }))
-          };
-          
-          console.log('Debug executeReport: RPC config:', rpcConfig);
-          console.log('Debug executeReport: Metrics being sent:', rpcConfig.metrics);
-          
-          const { data: rpcData, error: rpcError } = await supabase
-            .rpc('execute_custom_report_query', {
-              p_report_configuration: rpcConfig,
-              p_limit: 1000, // Increase limit to get more recent data
-              p_offset: 0
-            });
-            
-          console.log('Debug executeReport: RPC result:', rpcData);
-          
-          if (rpcError) {
-            console.error('RPC error:', rpcError);
-            throw rpcError;
-          }
-          
-          if (rpcData && rpcData.success) {
-            // The RPC function returns data in a specific format
-            // Let's check what we actually get and transform it appropriately
-            console.log('Debug executeReport: Raw RPC data structure:', rpcData);
-            console.log('Debug executeReport: First data row:', rpcData.data?.[0]);
-            data = rpcData.data;
-            error = null;
-          } else {
-            console.error('RPC function returned error:', rpcData?.message);
-            throw new Error(rpcData?.message || 'RPC function failed');
-          }
-        } catch (rpcError) {
-          console.error('RPC function failed, falling back to direct query:', rpcError);
-          
-          // Force fallback to direct query
-          error = rpcError;
-        }
-      } else {
-        console.log('Debug executeReport: Using direct query for multi-measure chart');
-      }
-      
-      // If RPC failed or we need direct query, use fallback
-      if (error || useDirectQuery) {
-        console.log('Debug executeReport: Using direct query fallback');
+        console.log('Applying filters to aggregated query:', applicableFilters);
+        console.log('Skipped filters:', config.filters.filter(f => !applicableFilters.includes(f)));
         
-        // Fallback to direct table query
-        const mainSource = config.dataSources[0];
-        if (mainSource && mainSource.table) {
-          try {
-            // Check if we need cross-source queries
-            const hasMultipleSources = config.dataSources.length > 1;
-            const measureFromDifferentSource = config.measures.some(m => m.dataSource !== mainSource.id);
-            const dimensionFromDifferentSource = config.dimensions.some(d => d.source !== mainSource.id);
-            const isPartitionedTable = mainSource.table.includes('_partitioned');
-            const needsHumanReadableNames = config.dimensions.some(d => 
-              d.field === 'program_id' || d.field === 'site_id' || d.field === 'submission_id'
-            );
-            
-            if (hasMultipleSources && (measureFromDifferentSource || dimensionFromDifferentSource) || 
-                (isPartitionedTable && needsHumanReadableNames) ||
-                needsHumanReadableNames) {
-              // Use raw SQL for cross-source queries and when human-readable names are needed
-              console.log('Using raw SQL for cross-source query or human-readable names');
-              
-              // Build the SQL with proper JOINs for multiple data sources
-              const selectFields: string[] = [];
-              const requiredJoins = new Set<string>();
-              const hasAggregations = config.measures.some(m => m.aggregation);
-              
-              // Add dimensions with proper table prefixes and human-readable names
-              config.dimensions.forEach(dim => {
-                const sourceTable = config.dataSources.find(ds => ds.id === dim.source)?.table || mainSource.table;
-                
-                // Special handling for ID fields to include names
-                if (dim.field === 'program_id') {
-                  selectFields.push(`${sourceTable}.${dim.field} as "${dim.field}"`);
-                  selectFields.push(`COALESCE(pilot_programs.program_name, ${sourceTable}.${dim.field}::text) as "program_name"`);
-                  selectFields.push(`pilot_programs.program_name as "program_name_raw"`);
-                  // Ensure pilot_programs is joined
-                  if (mainSource.table.includes('_partitioned')) {
-                    requiredJoins.add(`LEFT JOIN pilot_programs ON ${sourceTable}.program_id = pilot_programs.program_id`);
-                  } else {
-                    requiredJoins.add(`INNER JOIN submissions ON ${mainSource.table}.submission_id = submissions.submission_id`);
-                    requiredJoins.add(`INNER JOIN sites ON submissions.site_id = sites.site_id`);
-                    requiredJoins.add(`LEFT JOIN pilot_programs ON sites.program_id = pilot_programs.program_id`);
-                  }
-                } else if (dim.field === 'site_id') {
-                  selectFields.push(`${sourceTable}.${dim.field} as "${dim.field}"`);
-                  selectFields.push(`COALESCE(sites.site_name, ${sourceTable}.${dim.field}::text) as "site_name"`);
-                  selectFields.push(`sites.site_name as "site_name_raw"`);
-                  // Ensure sites table is joined
-                  if (mainSource.table.includes('observations')) {
-                    requiredJoins.add(`INNER JOIN submissions ON ${mainSource.table}.submission_id = submissions.submission_id`);
-                    requiredJoins.add(`LEFT JOIN sites ON submissions.site_id = sites.site_id`);
-                  } else if (mainSource.table === 'submissions') {
-                    requiredJoins.add(`LEFT JOIN sites ON submissions.site_id = sites.site_id`);
-                  }
-                } else if (dim.field === 'submission_id') {
-                  selectFields.push(`${sourceTable}.${dim.field} as "${dim.field}"`);
-                  selectFields.push(`COALESCE(submissions.global_submission_id::text || ' (' || TO_CHAR(submissions.created_at, 'MM/DD/YY') || ')', ${sourceTable}.${dim.field}::text) as "submission_display"`);
-                  selectFields.push(`submissions.global_submission_id`);
-                  selectFields.push(`submissions.created_at as "submission_created_at"`);
-                  // Ensure submissions table is joined
-                  if (mainSource.table.includes('observations')) {
-                    requiredJoins.add(`INNER JOIN submissions ON ${mainSource.table}.submission_id = submissions.submission_id`);
-                  }
-                } else {
-                  selectFields.push(`${sourceTable}.${dim.field} as "${dim.field}"`);
-                }
-                
-                if (sourceTable !== mainSource.table) {
-                  // Need to join this table
-                  if (sourceTable === 'submissions' && mainSource.table.includes('observations')) {
-                    requiredJoins.add(`INNER JOIN submissions ON ${mainSource.table}.submission_id = submissions.submission_id`);
-                  } else if (mainSource.table === 'submissions' && sourceTable.includes('observations')) {
-                    requiredJoins.add(`INNER JOIN ${sourceTable} ON submissions.submission_id = ${sourceTable}.submission_id`);
-                  } else if (sourceTable === 'sites') {
-                    // Sites table needs to be joined through submissions
-                    if (mainSource.table.includes('observations')) {
-                      requiredJoins.add(`INNER JOIN submissions ON ${mainSource.table}.submission_id = submissions.submission_id`);
-                      requiredJoins.add(`INNER JOIN sites ON submissions.site_id = sites.site_id`);
-                    } else if (mainSource.table === 'submissions') {
-                      requiredJoins.add(`INNER JOIN sites ON submissions.site_id = sites.site_id`);
-                    }
-                  }
-                }
-              });
-              
-              // Add measures with proper table prefixes
-              config.measures.forEach(measure => {
-                const sourceTable = config.dataSources.find(ds => ds.id === measure.dataSource)?.table || mainSource.table;
-                
-                // Handle computed measures with expressions
-                if (measure.source === 'computed' && (measure as any).expression) {
-                  selectFields.push(`${(measure as any).expression} as "${measure.displayName || measure.name}"`);
-                  
-                  // Check if this computed measure requires a join
-                  if ((measure as any).requiresJoin && (measure as any).requiredTable === 'pilot_programs') {
-                    // For partitioned tables, we can join directly using program_id
-                    if (mainSource.table.includes('_partitioned')) {
-                      requiredJoins.add(`INNER JOIN pilot_programs ON ${mainSource.table}.program_id = pilot_programs.program_id`);
-                    } else {
-                      // For non-partitioned tables, join through submissions and sites
-                      requiredJoins.add(`INNER JOIN submissions ON ${mainSource.table}.submission_id = submissions.submission_id`);
-                      requiredJoins.add(`INNER JOIN sites ON submissions.site_id = sites.site_id`);
-                      requiredJoins.add(`INNER JOIN pilot_programs ON sites.program_id = pilot_programs.program_id`);
-                    }
-                  }
-                } else if (measure.field === '*' && measure.aggregation === 'count') {
-                  // Handle COUNT(*) specially
-                  selectFields.push(`COUNT(${sourceTable}.*) as "${measure.displayName || measure.name}"`);
-                } else if (measure.aggregation) {
-                  // Apply aggregation function
-                  const aggFunc = measure.aggregation.toUpperCase();
-                  selectFields.push(`${aggFunc}(${sourceTable}.${measure.field}) as "${measure.displayName || measure.name}"`);
-                } else {
-                  selectFields.push(`${sourceTable}.${measure.field} as "${measure.field}"`);
-                }
-                
-                if (sourceTable !== mainSource.table && measure.source !== 'computed') {
-                  // Need to join this table
-                  if (sourceTable === 'submissions' && mainSource.table.includes('observations')) {
-                    requiredJoins.add(`INNER JOIN submissions ON ${mainSource.table}.submission_id = submissions.submission_id`);
-                  } else if (mainSource.table === 'submissions' && sourceTable.includes('observations')) {
-                    requiredJoins.add(`INNER JOIN ${sourceTable} ON submissions.submission_id = ${sourceTable}.submission_id`);
-                  } else if (sourceTable === 'sites') {
-                    // Sites table needs to be joined through submissions
-                    if (mainSource.table.includes('observations')) {
-                      requiredJoins.add(`INNER JOIN submissions ON ${mainSource.table}.submission_id = submissions.submission_id`);
-                      requiredJoins.add(`INNER JOIN sites ON submissions.site_id = sites.site_id`);
-                    } else if (mainSource.table === 'submissions') {
-                      requiredJoins.add(`INNER JOIN sites ON submissions.site_id = sites.site_id`);
-                    }
-                  } else if (mainSource.table === 'petri_observations' && sourceTable === 'gasifier_observations') {
-                    // Both observation tables - join through submissions
-                    requiredJoins.add(`INNER JOIN gasifier_observations ON ${mainSource.table}.submission_id = gasifier_observations.submission_id`);
-                  } else if (mainSource.table === 'gasifier_observations' && sourceTable === 'petri_observations') {
-                    requiredJoins.add(`INNER JOIN petri_observations ON ${mainSource.table}.submission_id = petri_observations.submission_id`);
-                  }
-                }
-              });
-              
-              // Only add metadata fields if we're NOT doing aggregations
-              // When doing aggregations, we only want dimension and measure fields
-              if (!hasAggregations) {
-                // Add metadata fields - only if they are in selectedFields or if no selectedFields specified
-                const addMetadataField = (field: string, source: DataSource) => {
-                  if (!source.selectedFields || source.selectedFields.length === 0 || source.selectedFields.includes(field)) {
-                    selectFields.push(`${source.table}.${field}`);
-                  }
-                };
-                
-                // Always add parent IDs for drill-down functionality
-                addMetadataField('submission_id', mainSource);
-                addMetadataField('site_id', mainSource);
-                addMetadataField('program_id', mainSource);
-                if (mainSource.table.includes('observations')) {
-                  addMetadataField('observation_id', mainSource);
-                }
-                
-                // Add selected fields from each data source that aren't already included
-                config.dataSources.forEach(source => {
-                  if (source.selectedFields && source.selectedFields.length > 0) {
-                    source.selectedFields.forEach(field => {
-                      // Check if field is already added as dimension or measure
-                      const fieldAlreadyAdded = selectFields.some(sf => 
-                        sf.includes(`${source.table}.${field}`) || sf.includes(`"${field}"`)
-                      );
-                      
-                      if (!fieldAlreadyAdded) {
-                        selectFields.push(`${source.table}.${field}`);
-                      }
-                    });
-                  }
-                });
-              }
-              
-              let sql = `SELECT ${selectFields.join(', ')} FROM ${mainSource.table}`;
-              
-              // Add JOINs
-              const joinsArray = Array.from(requiredJoins);
-              if (joinsArray.length > 0) {
-                sql += ' ' + joinsArray.join(' ');
-              }
-              
-              // Apply filters with proper table handling
-              const whereConditions: string[] = [];
-              config.filters?.forEach(filter => {
-                if (filter.relationshipPath && filter.relationshipPath.length > 0) {
-                  // Add necessary JOINs for cross-table filters
-                  filter.relationshipPath.forEach(path => {
-                    const joinClause = `${path.joinType || 'INNER'} JOIN ${path.toTable} ON ${path.fromTable}.${path.joinField} = ${path.toTable}.${path.foreignField}`;
-                    requiredJoins.add(joinClause);
-                  });
-                }
-                whereConditions.push(this.buildFilterClauseWithTable(filter));
-              });
-              
-              if (whereConditions.length > 0) {
-                sql += ' WHERE ' + whereConditions.join(' AND ');
-              }
-              
-              // Add GROUP BY if we have aggregations
-              if (hasAggregations && config.dimensions.length > 0) {
-                // We need to group by all non-aggregated fields
-                const groupByFields: string[] = [];
-                
-                // Add dimension fields
-                config.dimensions.forEach(dim => {
-                  const sourceTable = config.dataSources.find(ds => ds.id === dim.source)?.table || mainSource.table;
-                  groupByFields.push(`${sourceTable}.${dim.field}`);
-                });
-                
-                // Add all other non-aggregated fields from the SELECT clause
-                // For now, we'll only group by the dimension fields and let the query handle it
-                // If we're selecting individual records with metadata, we shouldn't use GROUP BY
-                
-                sql += ' GROUP BY ' + groupByFields.join(', ');
-              }
-              
-              sql += ' LIMIT 500';
-              
-              console.log('Generated cross-source SQL:', sql);
-              
-              // Execute raw SQL query
-              const rawResult = await this.executeRawQuery(sql);
-              
-              // Check if raw query failed or returned an error object
-              if (!rawResult || (Array.isArray(rawResult) && rawResult.length === 0) || (rawResult as any).error) {
-                console.log('Raw SQL query failed or returned no data, using Supabase query builder');
-                data = []; // Initialize data array
-                
-                // For aggregated queries with JOINs, we'll need to fetch raw data and aggregate in memory
-                // This is less efficient but works without RPC functions
-                try {
-                  // For cross-table queries, we need to fetch data and join manually
-                  // This is because Supabase nested joins have limitations
-                  
-                  // First, fetch the main table data
-                  let query = supabase.from(mainSource.table).select('*');
-                  
-                  // Apply filters
-                  config.filters?.forEach(filter => {
-                    const filterValue = filter.value;
-                    switch (filter.operator) {
-                      case 'equals':
-                        query = query.eq(filter.field, filterValue);
-                        break;
-                      case 'greater_than':
-                        query = query.gt(filter.field, filterValue);
-                        break;
-                      case 'less_than':
-                        query = query.lt(filter.field, filterValue);
-                        break;
-                      case 'contains':
-                        query = query.ilike(filter.field, `%${filterValue}%`);
-                        break;
-                    }
-                  });
-                  
-                  // Limit results
-                  query = query.limit(1000);
-                  
-                  const { data: fallbackData, error: fallbackError } = await query;
-                  
-                  if (!fallbackError && fallbackData && fallbackData.length > 0) {
-                    console.log('Main table query successful, got', fallbackData.length, 'records');
-                    
-                    // Check if we need to join with other tables
-                    const needsSites = config.dimensions.some(d => d.source === 'sites' || d.field === 'site_name') || 
-                                     config.measures.some(m => m.dataSource === 'sites') ||
-                                     (config.segmentBy && config.segmentBy.includes('site_id'));
-                    
-                    if (needsSites) {
-                      // Get unique submission IDs
-                      const submissionIds = [...new Set(fallbackData.map(row => row.submission_id).filter(Boolean))];
-                      
-                      if (submissionIds.length > 0) {
-                        // Fetch submissions with sites (including site_code for coalescing)
-                        const { data: submissionsData } = await supabase
-                          .from('submissions')
-                          .select('submission_id, site_id, program_id, global_submission_id, created_at, sites(site_id, site_code, name, site_type)')
-                          .in('submission_id', submissionIds);
-                        
-                        if (submissionsData) {
-                          console.log('Fetched submission/site data:', submissionsData.slice(0, 2));
-                          // Create lookup map
-                          const submissionMap = new Map();
-                          submissionsData.forEach(sub => {
-                            submissionMap.set(sub.submission_id, {
-                              ...sub,
-                              site_name: sub.sites?.name || null,
-                              site_code: sub.sites?.site_code || null,
-                              site_type: sub.sites?.site_type || null,
-                              global_submission_id: sub.global_submission_id,
-                              submission_created_at: sub.created_at
-                            });
-                          });
-                          
-                          // Join data
-                          data = fallbackData.map(row => {
-                            const submission = submissionMap.get(row.submission_id);
-                            if (submission) {
-                              return {
-                                ...row,
-                                site_id: submission.site_id,
-                                site_name: submission.site_name,
-                                site_code: submission.site_code,
-                                site_type: submission.site_type,
-                                // Include submission data as nested object for segment generation
-                                submissions: {
-                                  global_submission_id: submission.global_submission_id,
-                                  created_at: submission.submission_created_at,
-                                  sites: {
-                                    site_code: submission.site_code,
-                                    name: submission.site_name,
-                                    site_name: submission.site_name
-                                  }
-                                }
-                              };
-                            }
-                            return row;
-                          });
-                        } else {
-                          data = fallbackData;
-                        }
-                      } else {
-                        data = fallbackData;
-                      }
-                    } else {
-                      data = fallbackData;
-                    }
-                    
-                    console.log('Joined data sample:', data[0]);
-                    console.log('Total records after join:', data.length);
-                    
-                    // If we need site codes for segmentBy but don't have them, fetch separately
-                    if (config.segmentBy?.includes('site_id') && data.length > 0 && !data[0].site_code) {
-                      console.log('Fetching site codes for isolation filter...');
-                      const uniqueSiteIds = [...new Set(data.map(row => row.site_id).filter(Boolean))];
-                      
-                      if (uniqueSiteIds.length > 0) {
-                        const { data: sitesData } = await supabase
-                          .from('sites')
-                          .select('site_id, site_code')
-                          .in('site_id', uniqueSiteIds);
-                        
-                        if (sitesData) {
-                          const siteCodeMap = new Map();
-                          sitesData.forEach(site => {
-                            siteCodeMap.set(site.site_id, site.site_code);
-                          });
-                          
-                          // Add site_code to each row
-                          data = data.map(row => ({
-                            ...row,
-                            site_code: siteCodeMap.get(row.site_id) || null
-                          }));
-                          console.log('Added site codes to data');
-                        }
-                      }
-                    }
-                    
-                    // If we need global_submission_ids for segmentBy but don't have them, fetch separately
-                    if (config.segmentBy?.includes('submission_id') && data.length > 0 && !data[0].global_submission_id) {
-                      console.log('Fetching global_submission_ids for isolation filter...');
-                      const uniqueSubmissionIds = [...new Set(data.map(row => row.submission_id).filter(Boolean))];
-                      
-                      if (uniqueSubmissionIds.length > 0) {
-                        const { data: submissionsData } = await supabase
-                          .from('submissions')
-                          .select('submission_id, global_submission_id, created_at')
-                          .in('submission_id', uniqueSubmissionIds);
-                        
-                        if (submissionsData) {
-                          const submissionDataMap = new Map();
-                          submissionsData.forEach(sub => {
-                            submissionDataMap.set(sub.submission_id, {
-                              global_submission_id: sub.global_submission_id,
-                              created_at: sub.created_at
-                            });
-                          });
-                          
-                          // Add global_submission_id and created_at to each row
-                          data = data.map(row => {
-                            const subData = submissionDataMap.get(row.submission_id);
-                            return {
-                              ...row,
-                              global_submission_id: subData?.global_submission_id || null,
-                              // Add to submissions nested object for consistency
-                              submissions: {
-                                ...row.submissions,
-                                global_submission_id: subData?.global_submission_id,
-                                created_at: subData?.created_at
-                              }
-                            };
-                          });
-                          console.log('Added global_submission_ids to data');
-                        }
-                      }
-                    }
-                  } else {
-                    console.log('Fallback query returned no data');
-                  }
-                } catch (fallbackError) {
-                  console.error('Fallback query also failed:', fallbackError);
-                  data = [];
-                }
-              } else {
-                // Raw query succeeded
-                data = rawResult;
-              }
-              error = null;
-            } else {
-              // Single source query - continue with normal logic
-              // Build select fields including all measures, dimensions, and parent IDs
-              const selectFields = [];
-              
-              // Build clean select fields without duplicates
-              const uniqueFields = new Set<string>();
-              
-              // Add dimension fields
-              config.dimensions.forEach(dim => {
-                uniqueFields.add(dim.field);
-              });
-              
-              // Add measure fields
-              config.measures.forEach(measure => {
-                uniqueFields.add(measure.field);
-              });
-              
-              // Add parent IDs for drill-down functionality (always include these)
-              const parentIds = ['submission_id', 'site_id', 'program_id', 'observation_id'];
-              parentIds.forEach(id => {
-                uniqueFields.add(id);
-              });
-              
-              // If DataSource has selectedFields, use only those fields
-              // Otherwise, fall back to all available fields
-              if (mainSource.selectedFields && mainSource.selectedFields.length > 0) {
-                // Only add fields that are in the selectedFields list
-                const allowedFields = new Set(mainSource.selectedFields);
-                
-                // Always ensure parent IDs are included for drill-down
-                parentIds.forEach(id => allowedFields.add(id));
-                
-                // Filter uniqueFields to only include allowed fields
-                const tempFields = Array.from(uniqueFields);
-                uniqueFields.clear();
-                tempFields.forEach(field => {
-                  if (allowedFields.has(field)) {
-                    uniqueFields.add(field);
-                  }
-                });
-                
-                // Add any other selected fields that aren't already included
-                mainSource.selectedFields.forEach(field => {
-                  uniqueFields.add(field);
-                });
-              } else {
-                // Fall back to legacy behavior - add all metadata fields
-                const commonMetadataFields = ['image_url', 'placement'];
-                const isPetriTable = mainSource.table.includes('petri_observations');
-                const isGasifierTable = mainSource.table.includes('gasifier_observations');
-                
-                const tableSpecificFields = isPetriTable
-                  ? ['petri_code', 'fungicide_used', 'petri_growth_stage', 'x_position', 'y_position', 'growth_index', 'todays_day_of_phase']
-                  : isGasifierTable
-                  ? ['gasifier_code', 'chemical_type', 'measure', 'position_x', 'position_y', 'linear_reading']
-                  : [];
-                
-                [...commonMetadataFields, ...tableSpecificFields].forEach(field => {
-                  uniqueFields.add(field);
-                });
-              }
-              
-              // Convert to array and add related table fields for complete record data
-              const selectFieldsArray = Array.from(uniqueFields);
-              
-              // Don't add nested relationships for partitioned tables
-              // The partitioned tables already include program_id and site_id
-              const isPartitionedTable = mainSource.table.includes('_partitioned');
-              
-              // For partitioned tables, the cross-source query logic above will handle JOINs
-              // For non-partitioned tables, use nested Supabase syntax
-              if (!isPartitionedTable) {
-                selectFieldsArray.push('submissions(global_submission_id, created_at, sites(site_name, pilot_programs(program_name)))');
-              }
-              
-              console.log('Debug: Direct query selecting fields:', selectFieldsArray);
-              
-              let query = supabase
-                .from(mainSource.table)
-                .select(selectFieldsArray.join(', '));
-              
-            // Check if we have cross-table filters
-            const hasCrossTableFilters = config.filters?.some(f => f.relationshipPath && f.relationshipPath.length > 0);
-            
-            if (hasCrossTableFilters) {
-              // Use raw SQL for complex cross-table filtering
-              console.log('Using raw SQL for cross-table filtering');
-              
-              // Build the SQL query with JOINs
-              const { joins, requiredTables } = this.buildJoinClausesForFilters(config.filters || [], mainSource.table);
-              
-              // Build SELECT clause
-              const selectClause = selectFieldsArray.map(field => {
-                // Handle nested selections for raw SQL
-                if (field.includes('(')) {
-                  return null; // Skip nested selections for raw SQL
-                }
-                return `${mainSource.table}.${field}`;
-              }).filter(Boolean).join(', ');
-              
-              // Build WHERE clause
-              const whereConditions = config.filters?.map(filter => {
-                return this.buildFilterClauseWithTable(filter);
-              }) || [];
-              
-              let sql = `SELECT ${selectClause} FROM ${mainSource.table}`;
-              
-              // Add JOINs
-              if (joins.length > 0) {
-                sql += ' ' + joins.join(' ');
-              }
-              
-              // Add WHERE clause
-              if (whereConditions.length > 0) {
-                sql += ' WHERE ' + whereConditions.join(' AND ');
-              }
-              
-              sql += ' LIMIT 500';
-              
-              console.log('Generated SQL for cross-table filtering:', sql);
-              
-              // Execute raw SQL query
-              data = await this.executeRawQuery(sql);
-              error = null;
-            } else {
-              // Apply simple filters for non-cross-table queries
-              if (config.filters && config.filters.length > 0) {
-                config.filters.forEach(filter => {
-                  if (filter.field && filter.operator && filter.value) {
-                    // Convert value to appropriate type based on filter type
-                    let filterValue: any = filter.value;
-                    if (filter.type === 'number' && typeof filter.value === 'string') {
-                      filterValue = parseFloat(filter.value);
-                    }
-                    
-                    switch (filter.operator) {
-                      case 'equals':
-                        query = query.eq(filter.field, filterValue);
-                        break;
-                      case 'greater_than':
-                        query = query.gt(filter.field, filterValue);
-                        break;
-                      case 'less_than':
-                        query = query.lt(filter.field, filterValue);
-                        break;
-                      case 'greater_than_or_equal':
-                        query = query.gte(filter.field, filterValue);
-                        break;
-                      case 'less_than_or_equal':
-                        query = query.lte(filter.field, filterValue);
-                        break;
-                      case 'contains':
-                        query = query.ilike(filter.field, `%${filter.value}%`);
-                        break;
-                      case 'starts_with':
-                        query = query.ilike(filter.field, `${filter.value}%`);
-                        break;
-                      case 'ends_with':
-                        query = query.ilike(filter.field, `%${filter.value}`);
-                        break;
-                      case 'is_null':
-                        query = query.is(filter.field, null);
-                        break;
-                      case 'is_not_null':
-                        query = query.not(filter.field, 'is', null);
-                        break;
-                      case 'between':
-                        if (typeof filter.value === 'string' && filter.value.includes(',')) {
-                          const [start, end] = filter.value.split(',');
-                          const startValue = filter.type === 'number' ? parseFloat(start) : start;
-                          const endValue = filter.type === 'number' ? parseFloat(end) : end;
-                          query = query.gte(filter.field, startValue).lte(filter.field, endValue);
-                        }
-                        break;
-                      default:
-                        query = query.eq(filter.field, filterValue);
-                    }
-                  }
-                });
-              }
-              
-              const result = await query.limit(500);
-              data = result.data;
-              error = result.error;
+        applicableFilters.forEach(filter => {
+          if (filter.field && filter.operator && filter.value) {
+            switch (filter.operator) {
+              case 'equals':
+                query = query.eq(filter.field, filter.value);
+                break;
+              case 'not_equals':
+                query = query.neq(filter.field, filter.value);
+                break;
+              case 'contains':
+                query = query.ilike(filter.field, `%${filter.value}%`);
+                break;
+              case 'not_contains':
+                query = query.not(filter.field, 'ilike', `%${filter.value}%`);
+                break;
+              case 'greater_than':
+                query = query.gt(filter.field, filter.value);
+                break;
+              case 'less_than':
+                query = query.lt(filter.field, filter.value);
+                break;
             }
-            } // Close the else block from line 733
-          } catch (e) {
-            error = e;
           }
-        }
+        });
       }
-
+      
+      // Log the query for debugging
+      this.logQuery(query, 'Aggregated Query');
+      
+      const { data, error } = await query.limit(500);
+      
       if (error) {
-        console.error('Error executing report query:', error);
+        console.error('Aggregated query error:', error);
         throw error;
       }
-
-      // Process and format results
-      console.log('Raw data received:', data);
-      console.log('Raw data length:', data?.length || 0);
       
-      // Check if data is an error object
-      if (data && typeof data === 'object' && 'error' in data) {
-        console.log('Query returned an error object:', data);
-        console.log('Falling back to sample data');
-        return this.getSampleData(config);
-      }
+      console.log('Aggregated query results:', data?.length, 'records');
       
-      if (!data || !Array.isArray(data) || data.length === 0) {
-        console.log('No data received, falling back to sample data');
-        console.log('Possible reasons:');
-        console.log('1. No data in the selected tables matching your criteria');
-        console.log('2. Filters may be too restrictive');
-        console.log('3. Check if the tables have any data');
-        return this.getSampleData(config);
-      } else {
-        console.log('SUCCESS: Using real data from database!');
-        console.log('First row sample:', data[0]);
-      }
-      
-      const processedData = this.processQueryResults(data, config);
-      console.log('Processed data length:', processedData.length);
+      // Process data
+      const processedData = data?.map(row => ({
+        dimensions: this.extractDimensions(row, config.dimensions),
+        measures: this.extractMeasures(row, config.measures),
+        ...row
+      })) || [];
       
       const executionTime = Date.now() - startTime;
-
+      
       return {
         data: processedData,
         totalCount: data?.length || 0,
@@ -1476,1042 +658,100 @@ export class ReportingDataService {
           filters: config.filters
         }
       };
-
-    } catch (error) {
-      console.error('Report execution failed:', error);
-      console.log('Falling back to sample data');
       
-      // Return sample data for development
+    } catch (error) {
+      console.error('Aggregated query failed:', error);
+      console.log('Falling back to sample data');
       return this.getSampleData(config);
     }
   }
 
-  // Build SQL query from report configuration
-  private static buildQuery(config: ReportConfig): string {
-    const { dataSources, dimensions, measures, filters } = config;
-    
-    if (!dataSources.length || !measures.length) {
-      throw new Error('Data sources and measures are required');
-    }
-
-    // Start with main table
-    const mainSource = dataSources[0];
-    let query = `SELECT `;
-    
-    // Track joins needed for dimension labels and segmentBy
-    const segmentByFields = config.segmentBy || [];
-    const needsProgramName = dimensions.some(d => d.field === 'program_id') || segmentByFields.includes('program_id');
-    const needsSiteName = dimensions.some(d => d.field === 'site_id') || segmentByFields.includes('site_id');
-    const needsSubmissionId = dimensions.some(d => d.field === 'submission_id') || segmentByFields.includes('submission_id');
-    
-    // Add dimension fields with human-readable names
-    const dimensionFields = dimensions.map(dim => {
-      if (dim.source === 'computed') {
-        return `${dim.field} as ${dim.name}`;
-      }
-      
-      // Special handling for ID fields to include names
-      if (dim.field === 'program_id') {
-        return `COALESCE(pilot_programs.program_name, ${dim.source}.${dim.field}::text) as ${dim.name}`;
-      } else if (dim.field === 'site_id') {
-        // For site coalescing: use site_code for grouping and site name for display
-        return `COALESCE(sites.site_code::text, ${dim.source}.${dim.field}::text) as ${dim.name}`;
-      } else if (dim.field === 'submission_id') {
-        return `COALESCE(submissions.global_submission_id::text || ' (' || TO_CHAR(submissions.created_at, 'MM/DD/YY') || ')', ${dim.source}.${dim.field}::text) as ${dim.name}`;
-      }
-      
-      return `${dim.source}.${dim.field} as ${dim.name}`;
+  // Helper to extract dimension values
+  private static extractDimensions(row: any, dimensions: any[]): any {
+    const result: any = {};
+    dimensions.forEach(dim => {
+      result[dim.field] = row[dim.field];
     });
-    
-    // Add segmentBy fields with human-readable names
-    const segmentBySelectFields = segmentByFields.map(segment => {
-      if (segment === 'program_id') {
-        return `COALESCE(pilot_programs.program_name, ${mainSource.id}.program_id::text) as segment_program_id`;
-      } else if (segment === 'site_id') {
-        // For site coalescing: use site_code as the grouping key and site name as display
-        // This will group all sites with the same site_code together
-        return `COALESCE(sites.site_code::text, ${mainSource.id}.site_id::text) as segment_site_id, COALESCE(sites.name, 'Unknown Site') as segment_site_name`;
-      } else if (segment === 'submission_id') {
-        return `COALESCE(submissions.global_submission_id::text || ' (' || TO_CHAR(submissions.created_at, 'MM/DD/YY') || ')', ${mainSource.id}.submission_id::text) as segment_submission_id`;
-      }
-      return `${mainSource.id}.${segment} as segment_${segment}`;
-    });
+    return result;
+  }
 
-    // Add measure fields
-    const measureFields = measures.map(measure => {
-      // Handle computed measures with expressions
-      if (measure.source === 'computed' && (measure as any).expression) {
-        return `${(measure as any).expression} as ${measure.name}`;
-      }
-      
-      const sourceAlias = measure.dataSource || mainSource.id;
-      const aggregationExpr = `${measure.aggregation.toUpperCase()}(${sourceAlias}.${measure.field})`;
-      return `${aggregationExpr} as ${measure.name}`;
-    });
-
-    query += [...dimensionFields, ...segmentBySelectFields, ...measureFields].join(', ');
-    query += ` FROM ${mainSource.table} as ${mainSource.id}`;
-
-    // Add joins for additional data sources
-    // Track which tables we've already joined
-    const joinedTables = new Set([mainSource.id]);
-    
-    // Always join related tables when their IDs are used as dimensions
-    if (needsProgramName && !joinedTables.has('pilot_programs')) {
-      if (mainSource.table.includes('_partitioned')) {
-        query += ` LEFT JOIN pilot_programs ON ${mainSource.id}.program_id = pilot_programs.program_id`;
-      } else {
-        // For non-partitioned tables, join through submissions and sites
-        if (!joinedTables.has('submissions')) {
-          query += ` LEFT JOIN submissions ON ${mainSource.id}.submission_id = submissions.submission_id`;
-          joinedTables.add('submissions');
-        }
-        if (!joinedTables.has('sites')) {
-          query += ` LEFT JOIN sites ON submissions.site_id = sites.site_id`;
-          joinedTables.add('sites');
-        }
-        query += ` LEFT JOIN pilot_programs ON sites.program_id = pilot_programs.program_id`;
-      }
-      joinedTables.add('pilot_programs');
-    }
-    
-    if (needsSiteName && !joinedTables.has('sites')) {
-      if (mainSource.table.includes('_partitioned')) {
-        query += ` LEFT JOIN sites ON ${mainSource.id}.site_id = sites.site_id`;
-      } else {
-        if (!joinedTables.has('submissions')) {
-          query += ` LEFT JOIN submissions ON ${mainSource.id}.submission_id = submissions.submission_id`;
-          joinedTables.add('submissions');
-        }
-        query += ` LEFT JOIN sites ON submissions.site_id = sites.site_id`;
-      }
-      joinedTables.add('sites');
-    }
-    
-    if (needsSubmissionId && !joinedTables.has('submissions')) {
-      query += ` LEFT JOIN submissions ON ${mainSource.id}.submission_id = submissions.submission_id`;
-      joinedTables.add('submissions');
-    }
-    
-    // Check if any computed measures require joins
+  // Helper to extract measure values  
+  private static extractMeasures(row: any, measures: any[]): any {
+    const result: any = {};
     measures.forEach(measure => {
-      if (measure.source === 'computed' && (measure as any).requiresJoin && (measure as any).requiredTable === 'pilot_programs') {
-        if (!joinedTables.has('pilot_programs')) {
-          // For partitioned tables, we can join directly using program_id
-          if (mainSource.table.includes('_partitioned')) {
-            query += ` LEFT JOIN pilot_programs ON ${mainSource.id}.program_id = pilot_programs.program_id`;
-          } else {
-            // For non-partitioned tables, join through submissions and sites
-            if (!joinedTables.has('submissions')) {
-              query += ` LEFT JOIN submissions ON ${mainSource.id}.submission_id = submissions.submission_id`;
-              joinedTables.add('submissions');
-            }
-            if (!joinedTables.has('sites')) {
-              query += ` LEFT JOIN sites ON submissions.site_id = sites.site_id`;
-              joinedTables.add('sites');
-            }
-            query += ` LEFT JOIN pilot_programs ON sites.program_id = pilot_programs.program_id`;
-          }
-          joinedTables.add('pilot_programs');
-        }
-      }
+      result[measure.field] = row[measure.field];
     });
-    
-    dataSources.slice(1).forEach(source => {
-      // Handle sites table - need to ensure submissions is joined first
-      if (source.id === 'sites' && !joinedTables.has('submissions')) {
-        // First join submissions if not already present
-        if (mainSource.id === 'petri_observations' || mainSource.id === 'gasifier_observations') {
-          query += ` LEFT JOIN submissions ON ${mainSource.id}.submission_id = submissions.submission_id`;
-          joinedTables.add('submissions');
-        }
-      }
-      
-      query += ` LEFT JOIN ${source.table} as ${source.id} ON `;
-      
-      // Add appropriate join conditions based on common fields
-      if (source.id === 'submissions' && (mainSource.id === 'petri_observations' || mainSource.id === 'gasifier_observations')) {
-        query += `${mainSource.id}.submission_id = ${source.id}.submission_id`;
-      } else if (source.id === 'sites') {
-        query += `submissions.site_id = ${source.id}.site_id`;
-      } else if (source.id === 'pilot_programs') {
-        query += `${joinedTables.has('sites') ? 'sites' : 'submissions'}.program_id = ${source.id}.program_id`;
-      }
-      
-      joinedTables.add(source.id);
-    });
-
-    // Add WHERE clause for filters
-    if (filters.length > 0) {
-      const filterClauses = filters.map(filter => {
-        return this.buildFilterClause(filter);
-      });
-      query += ` WHERE ${filterClauses.join(' AND ')}`;
-    }
-
-    // Add GROUP BY for dimensions and segmentBy
-    // Count actual SELECT fields - site_id segment produces 2 fields, others produce 1
-    let totalSelectFields = dimensions.length;
-    segmentByFields.forEach(segment => {
-      if (segment === 'site_id') {
-        totalSelectFields += 2; // segment_site_id and segment_site_name
-      } else {
-        totalSelectFields += 1; // single field
-      }
-    });
-    
-    if (totalSelectFields > 0) {
-      const groupByFields = Array.from({ length: totalSelectFields }, (_, i) => i + 1);
-      query += ` GROUP BY ${groupByFields.join(', ')}`;
-    }
-
-    // Add ORDER BY
-    query += ` ORDER BY 1`;
-
-    return query;
+    return result;
   }
 
-  // Build filter clause
-  private static mapFilterOperator(operator: string): string {
-    const operatorMap: Record<string, string> = {
-      'equals': '=',
-      'not_equals': '!=',
-      'greater_than': '>',
-      'greater_than_or_equal': '>=',
-      'less_than': '<',
-      'less_than_or_equal': '<=',
-      'contains': 'LIKE',
-      'starts_with': 'LIKE',
-      'ends_with': 'LIKE',
-      'in': 'IN',
-      'not_in': 'NOT IN'
-    };
+  // Get sample data for testing
+  static getSampleData(config: ReportConfig): AggregatedData {
+    const executionTime = 100;
     
-    return operatorMap[operator] || '=';
-  }
-
-  private static buildFilterClause(filter: Filter): string {
-    const { field, operator, value } = filter;
-    
-    switch (operator) {
-      case 'equals':
-        return `${field} = '${value}'`;
-      case 'not_equals':
-        return `${field} != '${value}'`;
-      case 'greater_than':
-        return `${field} > ${value}`;
-      case 'less_than':
-        return `${field} < ${value}`;
-      case 'greater_than_or_equal':
-        return `${field} >= ${value}`;
-      case 'less_than_or_equal':
-        return `${field} <= ${value}`;
-      case 'contains':
-        return `${field} ILIKE '%${value}%'`;
-      case 'not_contains':
-        return `${field} NOT ILIKE '%${value}%'`;
-      case 'starts_with':
-        return `${field} ILIKE '${value}%'`;
-      case 'ends_with':
-        return `${field} ILIKE '%${value}'`;
-      case 'in':
-        const values = Array.isArray(value) ? value : [value];
-        return `${field} IN (${values.map(v => `'${v}'`).join(', ')})`;
-      case 'not_in':
-        const notInValues = Array.isArray(value) ? value : [value];
-        return `${field} NOT IN (${notInValues.map(v => `'${v}'`).join(', ')})`;
-      case 'is_null':
-        return `${field} IS NULL`;
-      case 'is_not_null':
-        return `${field} IS NOT NULL`;
-      case 'between':
-        if (Array.isArray(value) && value.length === 2) {
-          return `${field} BETWEEN ${value[0]} AND ${value[1]}`;
-        }
-        return `${field} = '${value}'`;
-      case 'range':
-        if (typeof value === 'string' && value.includes(',')) {
-          const [min, max] = value.split(',');
-          return `${field} >= ${min} AND ${field} <= ${max}`;
-        }
-        return `${field} = '${value}'`;
-      default:
-        console.warn(`Unknown filter operator: ${operator}, defaulting to equals`);
-        return `${field} = '${value}'`;
-    }
-  }
-
-  // Process query results into chart-ready format
-  private static processQueryResults(data: any[], config: ReportConfig): any[] {
-    if (!data) return [];
-
-    console.log('Processing', data.length, 'data rows for chart');
-    console.log('First row keys:', data[0] ? Object.keys(data[0]) : []);
-    console.log('First row values:', data[0] || {});
-    console.log('Config dimensions:', config.dimensions.map(d => ({ field: d.field, name: d.name })));
-    console.log('Raw data sample for program/site values:', data.slice(0, 3).map(d => ({
-      program_id: d.program_id,
-      site_id: d.site_id,
-      submission_id: d.submission_id
-    })));
-
-    return data.map(row => {
-      const dimensions: Record<string, any> = {};
-      const measures: Record<string, any> = {};
-      const metadata: Record<string, any> = {};
-
-      // Check if this is raw record data (direct query) or aggregated data (RPC)
-      const isRawRecord = row.observation_id !== undefined;
-      console.log('Processing row type:', isRawRecord ? 'Raw Record' : 'Aggregated Data');
-      
-      // Map dimensions from database row to chart format
-      config.dimensions.forEach(dim => {
-        const fieldName = dim.field;
-        let value;
-        
-        if (isRawRecord) {
-          // Direct field access for raw records
-          // First try the aliased name (which would have the human-readable value)
-          value = row[dim.name] || row[fieldName];
-          
-          // For specific ID fields, use the human-readable names from the query
-          if (fieldName === 'program_id') {
-            // Try multiple sources: direct field, nested structure, or fallback to ID
-            value = row.program_name || 
-                   row.submissions?.sites?.pilot_programs?.program_name || 
-                   value;
-          } else if (fieldName === 'site_id') {
-            // Try multiple sources: direct field, nested structure, or fallback to ID
-            value = row.site_name || 
-                   row.submissions?.sites?.site_name || 
-                   value;
-          } else if (fieldName === 'submission_id') {
-            // Try multiple sources: direct field, nested structure, or fallback to ID
-            value = row.submission_display || 
-                   (row.submissions?.global_submission_id && row.submissions?.created_at ? 
-                     `${row.submissions.global_submission_id} (${new Date(row.submissions.created_at).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: '2-digit' })})` : 
-                     value) ||
-                   value;
-          }
-          
-          console.log(`Dimension mapping - ${fieldName}: original=${row[fieldName]}, final=${value}`);
-        } else {
-          // Handle aggregated data (RPC results)
-          // First try the aliased name (which would have the human-readable value)
-          value = row[dim.name] || row[fieldName] || row[dim.id];
-          
-          // For RPC results, dimensions might be returned as "dimension" 
-          if (value === undefined && row.dimension !== undefined) {
-            value = row.dimension;
-          }
-        }
-        
-        // Format dates
-        if (dim.dataType === 'date' || dim.dataType === 'timestamp') {
-          if (value) {
-            const date = new Date(value);
-            value = date.toISOString().split('T')[0]; // YYYY-MM-DD format
-          }
-        }
-        
-        dimensions[fieldName] = value;
-      });
-      
-      // Add site_code to dimensions if available (for isolation filter display)
-      if (row.site_code || row.submissions?.sites?.site_code) {
-        dimensions.site_code = row.site_code || row.submissions?.sites?.site_code;
-      }
-      
-      // Add global_submission_id to dimensions if available (for isolation filter display)
-      if (row.global_submission_id || row.submissions?.global_submission_id) {
-        dimensions.global_submission_id = row.global_submission_id || row.submissions?.global_submission_id;
-      }
-      
-      // Map segmentBy fields as dimensions
-      const segmentByFields = config.segmentBy || [];
-      segmentByFields.forEach(segment => {
-        const segmentFieldName = `segment_${segment}`;
-        let value = row[segmentFieldName];
-        
-        // If segment field doesn't exist (fallback query path), generate it from raw data
-        if (value === undefined && isRawRecord) {
-          if (segment === 'program_id') {
-            value = row.program_name || row.submissions?.sites?.pilot_programs?.program_name || row.program_id?.toString();
-            dimensions[segmentFieldName] = value;
-          } else if (segment === 'site_id') {
-            // For sites: create both segment_site_id (site_code) and segment_site_name (site name)
-            const siteCode = row.submissions?.sites?.site_code || row.site_code;
-            const siteName = row.submissions?.sites?.site_name || row.site_name || row.submissions?.sites?.name;
-            
-            // Debug logging
-            if (!siteName || siteName === 'Unknown Site') {
-              console.log('Missing site name for row:', { 
-                site_id: row.site_id, 
-                site_code: siteCode,
-                site_name: row.site_name,
-                submissions_sites: row.submissions?.sites 
-              });
-            }
-            
-            dimensions[segmentFieldName] = siteCode?.toString() || row.site_id?.toString(); // Use site_code for grouping
-            dimensions['segment_site_name'] = siteName || 'Unknown Site'; // Store site name separately
-            value = dimensions[segmentFieldName];
-          } else if (segment === 'submission_id') {
-            const globalId = row.submissions?.global_submission_id;
-            const createdAt = row.submissions?.created_at;
-            if (globalId && createdAt) {
-              const date = new Date(createdAt);
-              const formattedDate = date.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: '2-digit' });
-              value = `${globalId} (${formattedDate})`;
-            } else {
-              value = row.submission_id?.toString();
-            }
-            dimensions[segmentFieldName] = value;
-          } else {
-            value = row[segment]?.toString();
-            dimensions[segmentFieldName] = value;
-          }
-        }
-        
-        if (value !== undefined) {
-          // Add to dimensions with the original field name for compatibility
-          dimensions[segment] = value;
-        }
-      });
-
-      // Map measures from database row to chart format
-      config.measures.forEach(measure => {
-        const fieldName = measure.field;
-        let value;
-        
-        if (isRawRecord) {
-          // Direct field access for raw records - no aggregation needed
-          value = row[fieldName];
-          console.log(`Raw record measure ${fieldName}:`, value);
-        } else {
-          // Handle aggregated data (RPC results)
-          value = row[fieldName] || row[measure.name] || row[measure.id];
-          
-          // If not found, try with aggregation prefix
-          if (value === undefined && measure.aggregation) {
-            const aggregatedFieldName = `${measure.aggregation}_${fieldName}`;
-            value = row[aggregatedFieldName];
-          }
-          console.log(`Aggregated measure ${fieldName}:`, value);
-        }
-        
-        // Convert to number for numeric measures, handle null values
-        if (measure.dataType === 'numeric' || measure.dataType === 'integer' || measure.dataType === 'number') {
-          if (value === null || value === undefined) {
-            value = null; // Keep as null for proper charting
-          } else {
-            value = parseFloat(value);
-            if (isNaN(value)) {
-              value = null; // Convert NaN to null
-            }
-          }
-        }
-        
-        measures[fieldName] = value;
-      });
-
-      // Add metadata for drill-down functionality (only for raw records)
-      if (isRawRecord) {
-        metadata.observation_id = row.observation_id;
-        metadata.submission_id = row.submission_id;
-        metadata.site_id = row.site_id;
-        metadata.program_id = row.program_id;
-        metadata.petri_code = row.petri_code;
-        metadata.created_at = row.created_at;
-        
-        // Add human-readable names for isolation filtering
-        metadata.program_name = row.program_name || row.program_name_raw;
-        metadata.site_name = row.site_name || row.site_name_raw;
-        metadata.site_code = row.site_code || row.submissions?.sites?.site_code;
-        metadata.submission_display = row.submission_display;
-        metadata.global_submission_id = row.global_submission_id;
-        
-        // Add any other relevant metadata fields
-        if (row.placement) metadata.placement = row.placement;
-        if (row.fungicide_used) metadata.fungicide_used = row.fungicide_used;
-        if (row.petri_growth_stage) metadata.petri_growth_stage = row.petri_growth_stage;
-        if (row.gasifier_code) metadata.gasifier_code = row.gasifier_code;
-        if (row.image_url) metadata.image_url = row.image_url;
-        
-        // Add additional metadata fields available in the schema
-        if (row.x_position) metadata.x_position = row.x_position;
-        if (row.y_position) metadata.y_position = row.y_position;
-        if (row.growth_index) metadata.growth_index = row.growth_index;
-        if (row.todays_day_of_phase) metadata.todays_day_of_phase = row.todays_day_of_phase;
-        
-        // Extract nested relationship data from JOINs
-        if (row.submissions) {
-          metadata.global_submission_id = row.submissions.global_submission_id;
-          
-          if (row.submissions.sites) {
-            metadata.site_name = row.submissions.sites.name;
-            
-            if (row.submissions.sites.pilot_programs) {
-              metadata.program_name = row.submissions.sites.pilot_programs.name;
-            }
-          }
-        }
-        
-        console.log('Raw record metadata extracted:', {
-          observation_id: metadata.observation_id,
-          image_url: metadata.image_url,
-          program_name: metadata.program_name,
-          site_name: metadata.site_name,
-          global_submission_id: metadata.global_submission_id
-        });
-      }
-
-      return { dimensions, measures, metadata };
-    });
-  }
-
-  // Generate sample data for development/testing
-  private static getSampleData(config: ReportConfig): AggregatedData {
-    console.log('Generating sample data with config:', config);
+    // Generate sample data based on config
     const sampleData = [];
-    
-    // For heatmaps, generate a grid of data
-    if (config.chartType === 'heatmap') {
-      // Generate heatmap grid data
-      const xCategories = ['Zone A', 'Zone B', 'Zone C', 'Zone D', 'Zone E', 'Zone F', 'Zone G', 'Zone H'];
-      const yCategories = ['Day 1', 'Day 2', 'Day 3', 'Day 4', 'Day 5', 'Day 6', 'Day 7'];
+    for (let i = 0; i < 20; i++) {
+      const row: any = {
+        dimensions: {},
+        measures: {}
+      };
       
-      for (let x = 0; x < xCategories.length; x++) {
-        for (let y = 0; y < yCategories.length; y++) {
-          const dimensions: Record<string, any> = {};
-          const measures: Record<string, any> = {};
-          const metadata: Record<string, any> = {};
-          
-          // Set x and y dimensions for heatmap
-          if (config.dimensions.length >= 2) {
-            dimensions[config.dimensions[0].field] = xCategories[x];
-            dimensions[config.dimensions[1].field] = yCategories[y];
-          } else if (config.dimensions.length === 1) {
-            dimensions[config.dimensions[0].field] = xCategories[x];
-            dimensions['y_category'] = yCategories[y];
-          }
-          
-          // Generate value with some pattern (creates interesting heatmap patterns)
-          const baseValue = 50;
-          const waveX = Math.sin(x * 0.5) * 20;
-          const waveY = Math.cos(y * 0.7) * 15;
-          const noise = (Math.random() - 0.5) * 10;
-          
-          config.measures.forEach(measure => {
-            if (measure.field === 'growth_index' || measure.field === 'effectiveness_score') {
-              // Create a gradient pattern
-              measures[measure.field] = Math.max(0, Math.min(100, baseValue + waveX + waveY + noise));
-            } else if (measure.field === 'outdoor_temperature') {
-              // Temperature gradient
-              measures[measure.field] = 65 + (x * 2) + (y * 1.5) + noise;
-            } else if (measure.field === 'outdoor_humidity') {
-              // Humidity inverse gradient
-              measures[measure.field] = 80 - (x * 3) - (y * 2) + noise;
-            } else {
-              // General pattern
-              measures[measure.field] = Math.max(0, baseValue + waveX + waveY + noise);
-            }
-          });
-          
-          // Add metadata
-          metadata.observation_id = `obs-${x}-${y}`;
-          metadata.x_position = x;
-          metadata.y_position = y;
-          metadata.placement = xCategories[x];
-          metadata.day_of_phase = y + 1;
-          
-          sampleData.push({ dimensions, measures, metadata });
+      // Add dimension values to nested structure
+      config.dimensions.forEach(dim => {
+        let value: any;
+        if (dim.field === 'petri_code') {
+          value = `P${i + 1}`;
+        } else if (dim.field === 'gasifier_code') {
+          value = `G${i + 1}`;
+        } else if (dim.field === 'site_id') {
+          value = `Site ${(i % 3) + 1}`;
+        } else if (dim.field === 'created_at') {
+          value = new Date(2023, 0, i + 1).toISOString().split('T')[0];
+        } else {
+          value = `Value ${i + 1}`;
         }
-      }
-    } else if (config.chartType === 'box_plot') {
-      // Generate box plot data with realistic distributions for each group
-      const groups = ['Control', 'Treatment A', 'Treatment B', 'Treatment C', 'Treatment D'];
-      const samplesPerGroup = 50; // Good sample size for statistical analysis
-      
-      groups.forEach((group, groupIndex) => {
-        // Different distribution parameters for each group
-        const baseMean = 50 + (groupIndex * 8); // Groups have different means
-        const baseStdDev = 8 + (groupIndex * 0.5); // Slightly different variances
-        const skewness = groupIndex === 2 ? 0.8 : 0; // Treatment B is skewed
         
-        for (let i = 0; i < samplesPerGroup; i++) {
-          const dimensions: Record<string, any> = {};
-          const measures: Record<string, any> = {};
-          const metadata: Record<string, any> = {};
-          
-          // Set group dimension
-          if (config.dimensions.length >= 1) {
-            dimensions[config.dimensions[0].field] = group;
-          }
-          
-          // Add secondary dimension if configured (e.g., time period)
-          if (config.dimensions.length >= 2) {
-            const timePeriods = ['Week 1', 'Week 2', 'Week 3', 'Week 4'];
-            dimensions[config.dimensions[1].field] = timePeriods[Math.floor(i / (samplesPerGroup / 4))];
-          }
-          
-          // Generate values with different distributions
-          config.measures.forEach(measure => {
-            let value: number;
-            
-            // Generate normally distributed data with Box-Muller transform
-            const u1 = Math.random();
-            const u2 = Math.random();
-            const z0 = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
-            
-            // Apply skewness if needed
-            let skewedZ = z0;
-            if (skewness !== 0) {
-              // Simple skewness approximation
-              skewedZ = z0 + skewness * Math.pow(z0, 2) * Math.sign(z0);
-            }
-            
-            value = baseMean + skewedZ * baseStdDev;
-            
-            // Add some outliers (5% chance)
-            if (Math.random() < 0.05) {
-              value = Math.random() < 0.5 
-                ? baseMean - 3 * baseStdDev - Math.random() * baseStdDev
-                : baseMean + 3 * baseStdDev + Math.random() * baseStdDev;
-            }
-            
-            // Ensure reasonable bounds based on measure type
-            if (measure.field === 'growth_index' || measure.field === 'effectiveness_score') {
-              value = Math.max(0, Math.min(100, value));
-            } else if (measure.field === 'outdoor_temperature') {
-              value = Math.max(40, Math.min(100, 70 + value * 0.3));
-            } else if (measure.field === 'outdoor_humidity') {
-              value = Math.max(20, Math.min(100, 60 + value * 0.4));
-            }
-            
-            measures[measure.field] = value;
-          });
-          
-          // Add metadata
-          metadata.sample_id = `${group.replace(' ', '_').toLowerCase()}_${i + 1}`;
-          metadata.group = group;
-          metadata.group_index = groupIndex;
-          metadata.sample_index = i;
-          
-          sampleData.push({ dimensions, measures, metadata });
-        }
+        // Store in both the nested structure and flat structure for compatibility
+        row.dimensions[dim.field] = value;
+        row[dim.name] = value;
+        row[dim.field] = value; // Also store by field name for direct access
       });
-    } else if (config.chartType === 'scatter') {
-      // Generate scatter plot data with realistic correlations
-      const sampleSize = 200; // More points for better scatter visualization
-      const groups = ['Group A', 'Group B', 'Group C', 'Group D'];
       
-      // Define correlation patterns for different groups
-      const correlationPatterns = [
-        { slope: 1.2, intercept: 10, noise: 15, correlation: 0.85 },   // Strong positive
-        { slope: -0.8, intercept: 80, noise: 20, correlation: -0.75 }, // Strong negative
-        { slope: 0.4, intercept: 40, noise: 30, correlation: 0.45 },   // Moderate positive
-        { slope: 0, intercept: 50, noise: 40, correlation: 0 }         // No correlation
-      ];
-      
-      for (let i = 0; i < sampleSize; i++) {
-        const dimensions: Record<string, any> = {};
-        const measures: Record<string, any> = {};
-        const metadata: Record<string, any> = {};
-        
-        // Assign to groups
-        const groupIndex = Math.floor(i / (sampleSize / groups.length));
-        const group = groups[groupIndex];
-        const pattern = correlationPatterns[groupIndex];
-        
-        // Set dimension (group)
-        if (config.dimensions.length >= 1) {
-          dimensions[config.dimensions[0].field] = group;
-        }
-        
-        // Generate correlated data points
-        const x = Math.random() * 100; // X value between 0-100
-        
-        // Y value based on correlation pattern
-        const baseY = pattern.slope * x + pattern.intercept;
-        const noise = (Math.random() - 0.5) * pattern.noise;
-        let y = baseY + noise;
-        
-        // Add some outliers (3% chance)
-        if (Math.random() < 0.03) {
-          y = Math.random() * 100; // Random outlier
-        }
-        
-        // Ensure Y is within reasonable bounds
-        y = Math.max(0, Math.min(100, y));
-        
-        // Set measures
-        if (config.measures.length >= 2) {
-          const xKey = config.measures[0].field;
-          const yKey = config.measures[1].field;
-          
-          // Map to specific measure types if known
-          if (xKey === 'outdoor_temperature' || xKey === 'indoor_temperature') {
-            measures[xKey] = 50 + x * 0.4; // Temperature 50-90°F
-          } else if (xKey === 'outdoor_humidity' || xKey === 'indoor_humidity') {
-            measures[xKey] = x; // Humidity 0-100%
-          } else {
-            measures[xKey] = x;
-          }
-          
-          if (yKey === 'growth_index' || yKey === 'effectiveness_score') {
-            measures[yKey] = y;
-          } else if (yKey === 'outdoor_temperature' || yKey === 'indoor_temperature') {
-            measures[yKey] = 50 + y * 0.4;
-          } else {
-            measures[yKey] = y;
-          }
-        }
-        
-        // Optional third measure for bubble size
-        if (config.measures.length >= 3) {
-          const sizeKey = config.measures[2].field;
-          // Size correlates somewhat with Y value
-          measures[sizeKey] = Math.max(5, y * 0.5 + (Math.random() - 0.5) * 20);
-        }
-        
-        // Add metadata
-        metadata.point_id = `point_${i + 1}`;
-        metadata.group = group;
-        metadata.group_index = groupIndex;
-        metadata.x_original = x;
-        metadata.y_original = y;
-        
-        sampleData.push({ dimensions, measures, metadata });
-      }
-    } else if (config.chartType === 'histogram') {
-      // Generate histogram data with various distributions
-      const sampleSize = 500; // Large sample for good histogram
-      const distributionType = Math.floor(Math.random() * 4); // Random distribution type
-      
-      for (let i = 0; i < sampleSize; i++) {
-        const dimensions: Record<string, any> = {};
-        const measures: Record<string, any> = {};
-        const metadata: Record<string, any> = {};
-        
-        // Set dimension if provided
-        if (config.dimensions.length >= 1) {
-          dimensions[config.dimensions[0].field] = 'All Data';
-        }
-        
-        // Generate values based on different distributions
-        config.measures.forEach(measure => {
-          let value: number;
-          
-          switch (distributionType) {
-            case 0: // Normal distribution
-              // Box-Muller transform for normal distribution
-              const u1 = Math.random();
-              const u2 = Math.random();
-              const z0 = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
-              value = 50 + z0 * 15; // Mean=50, StdDev=15
-              break;
-              
-            case 1: // Skewed distribution (log-normal)
-              const normal = Math.sqrt(-2 * Math.log(Math.random())) * Math.cos(2 * Math.PI * Math.random());
-              value = Math.exp(3 + normal * 0.5) * 0.5; // Log-normal
-              break;
-              
-            case 2: // Bimodal distribution
-              if (Math.random() < 0.5) {
-                // First peak
-                const n1 = Math.sqrt(-2 * Math.log(Math.random())) * Math.cos(2 * Math.PI * Math.random());
-                value = 30 + n1 * 10;
-              } else {
-                // Second peak
-                const n2 = Math.sqrt(-2 * Math.log(Math.random())) * Math.cos(2 * Math.PI * Math.random());
-                value = 70 + n2 * 10;
-              }
-              break;
-              
-            case 3: // Uniform distribution with some outliers
-              value = Math.random() * 80 + 10; // Uniform between 10-90
-              // Add 5% outliers
-              if (Math.random() < 0.05) {
-                value = Math.random() < 0.5 ? Math.random() * 10 : 90 + Math.random() * 10;
-              }
-              break;
-              
-            default:
-              value = Math.random() * 100;
-          }
-          
-          // Ensure reasonable bounds based on measure type
-          if (measure.field === 'growth_index' || measure.field === 'effectiveness_score') {
-            value = Math.max(0, Math.min(100, value));
-          } else if (measure.field === 'outdoor_temperature' || measure.field === 'indoor_temperature') {
-            value = Math.max(40, Math.min(100, 50 + value * 0.4));
-          } else if (measure.field === 'outdoor_humidity' || measure.field === 'indoor_humidity') {
-            value = Math.max(20, Math.min(100, value));
-          }
-          
-          measures[measure.field] = value;
-        });
-        
-        // Add metadata
-        metadata.sample_id = `sample_${i + 1}`;
-        metadata.distribution_type = ['normal', 'skewed', 'bimodal', 'uniform'][distributionType];
-        
-        sampleData.push({ dimensions, measures, metadata });
-      }
-    } else if (config.chartType === 'treemap') {
-      // Generate hierarchical time-series data for animated treemap
-      const sites = ['Site A', 'Site B', 'Site C', 'Site D'];
-      const petriCodes = ['P001', 'P002', 'P003', 'P004', 'P005'];
-      const timePoints = 7; // 7 days of data
-      
-      for (let t = 0; t < timePoints; t++) {
-        const currentDate = new Date();
-        currentDate.setDate(currentDate.getDate() - (timePoints - t - 1));
-        const dateStr = currentDate.toISOString().split('T')[0];
-        
-        // Generate data for each site and petri code combination
-        sites.forEach(site => {
-          petriCodes.forEach(petriCode => {
-            const dimensions: Record<string, any> = {};
-            const measures: Record<string, any> = {};
-            const metadata: Record<string, any> = {};
-            
-            // Set hierarchy dimensions
-            if (config.dimensions.length >= 1) {
-              dimensions[config.dimensions[0].field] = site;
-            }
-            if (config.dimensions.length >= 2) {
-              dimensions[config.dimensions[1].field] = petriCode;
-            }
-            if (config.dimensions.length >= 3) {
-              // Time dimension (last dimension)
-              dimensions[config.dimensions[2].field] = dateStr;
-            }
-            
-            // Generate growth values that change over time
-            config.measures.forEach(measure => {
-              const baseValue = Math.random() * 50 + 20; // Base value between 20-70
-              const growthRate = 1 + (Math.random() * 0.3); // Growth rate 1.0 - 1.3
-              const timeEffect = Math.pow(growthRate, t); // Exponential growth
-              const noise = (Math.random() - 0.5) * 10; // Random variation
-              
-              // Different patterns for different sites
-              let siteMultiplier = 1;
-              if (site === 'Site A') siteMultiplier = 1.2; // Best performing
-              if (site === 'Site B') siteMultiplier = 0.9;
-              if (site === 'Site C') siteMultiplier = 1.1;
-              if (site === 'Site D') siteMultiplier = 0.8; // Worst performing
-              
-              const value = Math.max(0, Math.min(100, baseValue * timeEffect * siteMultiplier + noise));
-              
-              if (measure.field === 'growth_index' || measure.field === 'growth_score') {
-                measures[measure.field] = value;
-              } else if (measure.field === 'colony_count') {
-                measures[measure.field] = Math.floor(value * 10); // Scale up for counts
-              } else if (measure.field === 'effectiveness_score') {
-                // Effectiveness decreases with growth (inverse relationship)
-                measures[measure.field] = Math.max(0, 100 - value);
-              } else {
-                measures[measure.field] = value;
-              }
-            });
-            
-            // Add metadata
-            metadata.site_id = site.toLowerCase().replace(' ', '_');
-            metadata.petri_code = petriCode;
-            metadata.observation_date = dateStr;
-            metadata.day_number = t + 1;
-            metadata.growth_stage = t < 2 ? 'early' : t < 5 ? 'mid' : 'late';
-            
-            sampleData.push({ dimensions, measures, metadata });
-          });
-        });
-      }
-    } else if (config.chartType === 'spatial_effectiveness') {
-      // Generate spatial effectiveness data with geographic coordinates
-      const siteCount = 50; // Number of sites to generate
-      
-      // Define region bounds (example: agricultural region)
-      const latMin = 40.0;
-      const latMax = 45.0;
-      const lngMin = -120.0;
-      const lngMax = -115.0;
-      
-      // Define clusters of sites with different effectiveness patterns
-      const clusters = [
-        { lat: 41.5, lng: -118.5, radius: 0.8, effectiveness: 85, variance: 10 }, // High effectiveness cluster
-        { lat: 43.2, lng: -117.0, radius: 1.0, effectiveness: 45, variance: 15 }, // Low effectiveness cluster
-        { lat: 42.0, lng: -119.0, radius: 0.6, effectiveness: 70, variance: 8 },  // Medium effectiveness cluster
-        { lat: 44.0, lng: -116.5, radius: 0.7, effectiveness: 60, variance: 12 }  // Another medium cluster
-      ];
-      
-      for (let i = 0; i < siteCount; i++) {
-        const dimensions: Record<string, any> = {};
-        const measures: Record<string, any> = {};
-        const metadata: Record<string, any> = {};
-        
-        // Generate site location
-        let lat: number, lng: number, baseEffectiveness: number;
-        
-        // 70% chance to be in a cluster, 30% random
-        if (Math.random() < 0.7) {
-          // Pick a random cluster
-          const cluster = clusters[Math.floor(Math.random() * clusters.length)];
-          
-          // Generate point within cluster radius
-          const angle = Math.random() * 2 * Math.PI;
-          const distance = Math.random() * cluster.radius;
-          lat = cluster.lat + distance * Math.cos(angle);
-          lng = cluster.lng + distance * Math.sin(angle);
-          
-          // Effectiveness based on cluster center
-          baseEffectiveness = cluster.effectiveness + (Math.random() - 0.5) * cluster.variance;
+      // Add measure values to nested structure
+      config.measures.forEach(measure => {
+        let value: number;
+        if (measure.aggregation === 'count') {
+          value = Math.floor(Math.random() * 100) + 1;
+        } else if (measure.aggregation === 'sum') {
+          value = Math.floor(Math.random() * 1000) + 100;
+        } else if (measure.aggregation === 'avg') {
+          value = Math.round((Math.random() * 100) * 100) / 100;
         } else {
-          // Random location
-          lat = latMin + Math.random() * (latMax - latMin);
-          lng = lngMin + Math.random() * (lngMax - lngMin);
-          
-          // Random effectiveness
-          baseEffectiveness = Math.random() * 100;
+          value = Math.floor(Math.random() * 50) + 1;
         }
         
-        // Set location dimensions
-        if (config.dimensions.length >= 1) {
-          dimensions[config.dimensions[0].field] = `Site_${i + 1}`;
-        }
-        if (config.dimensions.length >= 2) {
-          const regions = ['North', 'South', 'East', 'West', 'Central'];
-          dimensions[config.dimensions[1].field] = regions[Math.floor(i / (siteCount / regions.length))];
-        }
-        
-        // Set measures with geographic influence
-        config.measures.forEach(measure => {
-          if (measure.field === 'latitude') {
-            measures[measure.field] = lat;
-          } else if (measure.field === 'longitude') {
-            measures[measure.field] = lng;
-          } else if (measure.field === 'effectiveness_score' || measure.field === 'growth_index') {
-            // Add environmental influence based on latitude (temperature gradient)
-            const latitudeInfluence = (lat - latMin) / (latMax - latMin) * 20 - 10;
-            measures[measure.field] = Math.max(0, Math.min(100, baseEffectiveness + latitudeInfluence));
-          } else if (measure.field === 'elevation') {
-            // Simulate elevation based on longitude (mountain range effect)
-            const lngNormalized = (lng - lngMin) / (lngMax - lngMin);
-            measures[measure.field] = 500 + Math.sin(lngNormalized * Math.PI) * 1500 + (Math.random() - 0.5) * 200;
-          } else if (measure.field === 'treatment_count') {
-            measures[measure.field] = Math.floor(Math.random() * 10) + 1;
-          } else {
-            measures[measure.field] = Math.random() * 100;
-          }
-        });
-        
-        // Add rich metadata
-        metadata.site_id = `site_${i + 1}`;
-        metadata.site_name = `Research Site ${i + 1}`;
-        metadata.latitude = lat;
-        metadata.longitude = lng;
-        metadata.establishment_date = new Date(Date.now() - Math.random() * 365 * 24 * 60 * 60 * 1000 * 5).toISOString();
-        metadata.site_type = ['experimental', 'control', 'monitoring'][Math.floor(Math.random() * 3)];
-        metadata.soil_type = ['clay', 'loam', 'sandy', 'silt'][Math.floor(Math.random() * 4)];
-        metadata.irrigation = Math.random() > 0.5 ? 'irrigated' : 'rainfed';
-        
-        sampleData.push({ dimensions, measures, metadata });
-      }
-    } else {
-      // Original sample data generation for other chart types
-      const sampleSize = 20;
-
-      for (let i = 0; i < sampleSize; i++) {
-        const dimensions: Record<string, any> = {};
-        const measures: Record<string, any> = {};
-        const metadata: Record<string, any> = {};
-
-        // Generate sample dimension data
-        config.dimensions.forEach(dim => {
-          switch (dim.dataType) {
-            case 'enum':
-              // Use actual enum values if available
-              if (dim.enumValues && dim.enumValues.length > 0) {
-                dimensions[dim.field] = dim.enumValues[i % dim.enumValues.length];
-              } else {
-                dimensions[dim.field] = `Value ${i + 1}`;
-              }
-              break;
-            case 'text':
-              dimensions[dim.field] = `Text Value ${i + 1}`;
-              break;
-            case 'date':
-            case 'timestamp':
-              const date = new Date();
-              date.setDate(date.getDate() - i);
-              dimensions[dim.field] = date.toISOString().split('T')[0];
-              break;
-            default:
-              dimensions[dim.field] = `Value ${i + 1}`;
-          }
-        });
-
-        // Generate sample measure data with realistic values
-        config.measures.forEach(measure => {
-          if (measure.field === 'outdoor_temperature') {
-            // Generate realistic temperature values (60-90°F)
-            measures[measure.field] = Math.floor(Math.random() * 30) + 60;
-          } else if (measure.field === 'outdoor_humidity') {
-            // Generate realistic humidity values (40-80%)
-            measures[measure.field] = Math.floor(Math.random() * 40) + 40;
-          } else {
-            // General numeric values
-            measures[measure.field] = Math.floor(Math.random() * 100) + 1;
-          }
-        });
-
-        // Generate sample metadata for drill-down functionality with realistic UUIDs
-        const generateUUID = (prefix: string, index: number) => {
-          const baseUUID = '00000000-0000-4000-8000-000000000000';
-          const hexIndex = index.toString(16).padStart(12, '0');
-          return `${prefix}${baseUUID.slice(prefix.length, 8)}-${baseUUID.slice(9, 13)}-${baseUUID.slice(14, 18)}-${baseUUID.slice(19, 23)}-${hexIndex}`;
-        };
-
-        metadata.observation_id = generateUUID('obs', i + 1);
-        metadata.submission_id = generateUUID('sub', i + 1);
-        metadata.site_id = generateUUID('sit', i + 1);
-        metadata.program_id = generateUUID('prg', i + 1);
-        metadata.petri_code = `PETRI_${String(i + 1).padStart(3, '0')}`;
-        metadata.created_at = new Date(Date.now() - i * 86400000).toISOString();
-        metadata.placement = ['P1', 'P2', 'P3', 'P4', 'P5', 'S1', 'R1'][i % 7];
-        metadata.fungicide_used = i % 2 === 0 ? 'Yes' : 'No';
-        metadata.petri_growth_stage = ['None', 'Trace', 'Low', 'Moderate', 'High'][i % 5];
-        
-        // Add sample image URLs (mix of valid and null for testing)
-        if (i % 3 === 0) {
-          metadata.image_url = `https://example.com/petri-images/sample-${i + 1}.jpg`;
-        } else if (i % 5 === 0) {
-          metadata.image_url = null; // Test null image case
-        } else {
-          metadata.image_url = `https://picsum.photos/800/600?random=${i + 1}`; // Placeholder images for demo
-        }
-        
-        // Add sample related data (program name, site name, global submission ID)
-        const programNames = ['Seedling Phase 1', 'Growth Optimization Study', 'Environmental Impact Analysis', 'Yield Enhancement Program', 'Pest Resistance Trial'];
-        const siteNames = ['Greenhouse Alpha', 'Field Station Beta', 'Laboratory Gamma', 'Research Facility Delta', 'Test Site Epsilon'];
-        
-        metadata.program_name = programNames[i % programNames.length];
-        metadata.site_name = siteNames[i % siteNames.length];
-        metadata.global_submission_id = 1100000 + i + 1; // Starting from 1100001
-
-        sampleData.push({ dimensions, measures, metadata });
-      }
+        // Store in both the nested structure and flat structure for compatibility
+        row.measures[measure.field] = value;
+        row[measure.name] = value;
+        row[measure.field] = value; // Also store by field name for direct access
+      });
+      
+      // Add metadata fields for image functionality and drill-down
+      row.image_url = `https://example.com/images/sample_${i + 1}.jpg`;
+      row.placement = `Placement ${(i % 4) + 1}`;
+      row.submission_id = `sub_${1000 + i}`;
+      row.site_id = `site_${(i % 3) + 1}`;
+      row.program_id = `prog_${(i % 2) + 1}`;
+      row.created_at = new Date(2023, 0, i + 1).toISOString();
+      
+      sampleData.push(row);
     }
 
-    console.log('Generated sample data:', sampleData.slice(0, 2)); // Log first 2 rows
-
-    const totalCount = sampleData.length;
     return {
       data: sampleData,
-      totalCount: totalCount,
-      filteredCount: totalCount,
-      executionTime: 45,
+      totalCount: sampleData.length,
+      filteredCount: sampleData.length,
+      executionTime,
       cacheHit: false,
       metadata: {
         lastUpdated: new Date().toISOString(),
@@ -2520,5 +760,222 @@ export class ReportingDataService {
         filters: config.filters
       }
     };
+  }
+
+  // Get available dimensions based on data sources
+  static getAvailableDimensions(dataSources: DataSource[]): Dimension[] {
+    const dimensions: Dimension[] = [];
+    
+    dataSources.forEach(dataSource => {
+      dataSource.fields.forEach(field => {
+        if (field.type === 'text' || field.type === 'date' || field.type === 'datetime') {
+          dimensions.push({
+            id: `${dataSource.id}_${field.name}`,
+            name: field.displayName,
+            field: field.name,
+            dataType: field.type,
+            source: dataSource.id,
+            displayName: field.displayName,
+            description: `${field.displayName} from ${dataSource.name}`
+          });
+        }
+      });
+    });
+    
+    return dimensions;
+  }
+
+  // Get available measures based on data sources
+  static getAvailableMeasures(dataSources: DataSource[]): Measure[] {
+    const measures: Measure[] = [];
+    
+    dataSources.forEach(dataSource => {
+      dataSource.fields.forEach(field => {
+        if (field.type === 'integer' || field.type === 'numeric') {
+          // Add different aggregation types for numeric fields
+          const aggregations = ['count', 'sum', 'avg', 'min', 'max'];
+          aggregations.forEach(agg => {
+            measures.push({
+              id: `${dataSource.id}_${field.name}_${agg}`,
+              name: `${field.displayName} (${agg.toUpperCase()})`,
+              field: field.name,
+              dataType: field.type,
+              aggregation: agg as any,
+              dataSource: dataSource.id,
+              description: `${agg.toUpperCase()} of ${field.displayName} from ${dataSource.name}`
+            });
+          });
+        }
+      });
+      
+      // Add count measure for any table
+      measures.push({
+        id: `${dataSource.id}_count`,
+        name: `Record Count`,
+        field: '*',
+        dataType: 'integer',
+        aggregation: 'count',
+        dataSource: dataSource.id,
+        description: `Count of records from ${dataSource.name}`
+      });
+    });
+    
+    return measures;
+  }
+
+  // Get available filter fields
+  static async getAvailableFilterFields(dataSources: DataSource[]): Promise<Array<{ id: string; name: string; displayName: string; dataType: string; source: string; field: string; }>> {
+    const filterFields: Array<{ id: string; name: string; displayName: string; dataType: string; source: string; field: string; }> = [];
+    
+    dataSources.forEach(dataSource => {
+      dataSource.fields.forEach(field => {
+        filterFields.push({
+          id: `${dataSource.id}_${field.name}`,
+          name: field.name,
+          displayName: field.displayName,
+          dataType: field.type,
+          source: dataSource.id,
+          field: field.name
+        });
+      });
+    });
+    
+    return filterFields;
+  }
+
+  // Get available data sources
+  static getAvailableDataSources(): DataSource[] {
+    return [
+      {
+        id: 'petri_observations',
+        name: 'Petri Observations',
+        table: 'petri_observations_partitioned',
+        description: 'Petri dish observation data',
+        isPrimary: true,
+        fields: [
+          { name: 'petri_code', type: 'text', displayName: 'Petri Code' },
+          { name: 'site_id', type: 'text', displayName: 'Site ID' },
+          { name: 'submission_id', type: 'text', displayName: 'Submission ID' },
+          { name: 'created_at', type: 'datetime', displayName: 'Created Date' },
+          { name: 'updated_at', type: 'datetime', displayName: 'Updated Date' },
+          { name: 'growth_index', type: 'numeric', displayName: 'Growth Index' },
+          { name: 'petri_growth_stage', type: 'text', displayName: 'Growth Stage' },
+          { name: 'experiment_role', type: 'text', displayName: 'Experiment Role' },
+          { name: 'placement', type: 'text', displayName: 'Placement' },
+          { name: 'x_position', type: 'numeric', displayName: 'X Position' },
+          { name: 'y_position', type: 'numeric', displayName: 'Y Position' },
+          { name: 'todays_day_of_phase', type: 'numeric', displayName: 'Days in Phase' }
+        ]
+      },
+      {
+        id: 'gasifier_observations',
+        name: 'Gasifier Observations', 
+        table: 'gasifier_observations_partitioned',
+        description: 'Gasifier observation data',
+        isPrimary: false,
+        fields: [
+          { name: 'gasifier_code', type: 'text', displayName: 'Gasifier Code' },
+          { name: 'site_id', type: 'text', displayName: 'Site ID' },
+          { name: 'submission_id', type: 'text', displayName: 'Submission ID' },
+          { name: 'created_at', type: 'datetime', displayName: 'Created Date' },
+          { name: 'chemical_type', type: 'text', displayName: 'Chemical Type' },
+          { name: 'measure', type: 'numeric', displayName: 'Measure' },
+          { name: 'linear_reading', type: 'numeric', displayName: 'Linear Reading' },
+          { name: 'flow_rate', type: 'numeric', displayName: 'Flow Rate' },
+          { name: 'placement_height', type: 'numeric', displayName: 'Placement Height' },
+          { name: 'directional_placement', type: 'text', displayName: 'Directional Placement' },
+          { name: 'outdoor_temperature', type: 'numeric', displayName: 'Outdoor Temperature' },
+          { name: 'outdoor_humidity', type: 'numeric', displayName: 'Outdoor Humidity' }
+        ]
+      },
+      {
+        id: 'submissions',
+        name: 'Submissions',
+        table: 'submissions',
+        description: 'Data submission records',
+        isPrimary: false,
+        fields: [
+          { name: 'submission_id', type: 'text', displayName: 'Submission ID' },
+          { name: 'global_submission_id', type: 'text', displayName: 'Global Submission ID' },
+          { name: 'site_id', type: 'text', displayName: 'Site ID' },
+          { name: 'created_at', type: 'datetime', displayName: 'Created Date' },
+          { name: 'updated_at', type: 'datetime', displayName: 'Updated Date' },
+          { name: 'status', type: 'text', displayName: 'Status' },
+          { name: 'notes', type: 'text', displayName: 'Notes' }
+        ]
+      },
+      {
+        id: 'sites',
+        name: 'Sites',
+        table: 'sites',
+        description: 'Site information and details',
+        isPrimary: false,
+        fields: [
+          { name: 'site_id', type: 'text', displayName: 'Site ID' },
+          { name: 'site_code', type: 'text', displayName: 'Site Code' },
+          { name: 'name', type: 'text', displayName: 'Site Name' },
+          { name: 'site_type', type: 'text', displayName: 'Site Type' },
+          { name: 'program_id', type: 'text', displayName: 'Program ID' },
+          { name: 'location', type: 'text', displayName: 'Location' },
+          { name: 'created_at', type: 'datetime', displayName: 'Created Date' },
+          { name: 'microbial_risk_zone', type: 'text', displayName: 'Microbial Risk Zone' },
+          { name: 'length', type: 'numeric', displayName: 'Length' },
+          { name: 'width', type: 'numeric', displayName: 'Width' },
+          { name: 'height', type: 'numeric', displayName: 'Height' }
+        ]
+      },
+      {
+        id: 'pilot_programs',
+        name: 'Pilot Programs',
+        table: 'pilot_programs',
+        description: 'Pilot program information',
+        isPrimary: false,
+        fields: [
+          { name: 'program_id', type: 'text', displayName: 'Program ID' },
+          { name: 'program_name', type: 'text', displayName: 'Program Name' },
+          { name: 'description', type: 'text', displayName: 'Description' },
+          { name: 'start_date', type: 'date', displayName: 'Start Date' },
+          { name: 'end_date', type: 'date', displayName: 'End Date' },
+          { name: 'status', type: 'text', displayName: 'Status' },
+          { name: 'created_at', type: 'datetime', displayName: 'Created Date' },
+          { name: 'phase_type', type: 'text', displayName: 'Phase Type' }
+        ]
+      },
+      {
+        id: 'petri_observations_raw',
+        name: 'Petri Observations (Raw)',
+        table: 'petri_observations',
+        description: 'Non-partitioned petri observation data',
+        isPrimary: false,
+        fields: [
+          { name: 'petri_code', type: 'text', displayName: 'Petri Code' },
+          { name: 'site_id', type: 'text', displayName: 'Site ID' },
+          { name: 'submission_id', type: 'text', displayName: 'Submission ID' },
+          { name: 'created_at', type: 'datetime', displayName: 'Created Date' },
+          { name: 'updated_at', type: 'datetime', displayName: 'Updated Date' },
+          { name: 'growth_index', type: 'numeric', displayName: 'Growth Index' },
+          { name: 'petri_growth_stage', type: 'text', displayName: 'Growth Stage' },
+          { name: 'fungicide_used', type: 'text', displayName: 'Fungicide Used' },
+          { name: 'placement', type: 'text', displayName: 'Placement' }
+        ]
+      },
+      {
+        id: 'gasifier_observations_raw',
+        name: 'Gasifier Observations (Raw)',
+        table: 'gasifier_observations',
+        description: 'Non-partitioned gasifier observation data',
+        isPrimary: false,
+        fields: [
+          { name: 'gasifier_code', type: 'text', displayName: 'Gasifier Code' },
+          { name: 'site_id', type: 'text', displayName: 'Site ID' },
+          { name: 'submission_id', type: 'text', displayName: 'Submission ID' },
+          { name: 'created_at', type: 'datetime', displayName: 'Created Date' },
+          { name: 'chemical_type', type: 'text', displayName: 'Chemical Type' },
+          { name: 'measure', type: 'numeric', displayName: 'Measure' },
+          { name: 'linear_reading', type: 'numeric', displayName: 'Linear Reading' },
+          { name: 'flow_rate', type: 'numeric', displayName: 'Flow Rate' }
+        ]
+      }
+    ];
   }
 }

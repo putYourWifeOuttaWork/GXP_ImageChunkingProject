@@ -1,11 +1,15 @@
 import React, { useState } from 'react';
-import { Plus, Grid, Calendar, MapPin, Tag, Type, Hash, Trash2 } from 'lucide-react';
+import { Plus, Grid, Calendar, MapPin, Tag, Type, Hash, Trash2, Edit2, GripVertical } from 'lucide-react';
 import Button from '../../common/Button';
 import { Dimension, DataSource } from '../../../types/reporting';
+import { EditableItem } from './components/EditableItem';
+import { DragDropList } from './components/DragDropList';
 
 interface DimensionPanelProps {
   dimensions: Dimension[];
   onAddDimension: (dimension: Dimension) => void;
+  onUpdateDimension: (id: string, updates: Partial<Dimension>) => void;
+  onReorderDimensions: (dimensions: Dimension[]) => void;
   onRemoveDimension: (id: string) => void;
   selectedDimensions: string[];
   onSelectionChange: (selectedIds: string[]) => void;
@@ -16,6 +20,8 @@ interface DimensionPanelProps {
 export const DimensionPanel: React.FC<DimensionPanelProps> = ({
   dimensions,
   onAddDimension,
+  onUpdateDimension,
+  onReorderDimensions,
   onRemoveDimension,
   selectedDimensions,
   onSelectionChange,
@@ -60,6 +66,7 @@ export const DimensionPanel: React.FC<DimensionPanelProps> = ({
     }
   };
 
+
   const getIcon = (dataType: string) => {
     switch (dataType) {
       case 'text':
@@ -96,34 +103,69 @@ export const DimensionPanel: React.FC<DimensionPanelProps> = ({
       {/* Selected Dimensions */}
       {dimensions.length > 0 && (
         <div className="space-y-3">
-          <h4 className="text-sm font-medium text-gray-900">Selected Dimensions</h4>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {dimensions.map((dimension) => (
-              <div
-                key={dimension.id}
-                className="p-3 bg-primary-50 border border-primary-200 rounded-lg"
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-2">
-                    {getIcon(dimension.dataType)}
-                    <div>
-                      <h5 className="font-medium text-gray-900">{dimension.displayName}</h5>
-                      <p className="text-sm text-gray-600">{dimension.source}.{dimension.field}</p>
+          <div className="flex items-center justify-between">
+            <h4 className="text-sm font-medium text-gray-900">Selected Dimensions</h4>
+            <p className="text-xs text-gray-500">Drag to reorder</p>
+          </div>
+          
+          <DragDropList
+            items={dimensions}
+            onReorder={onReorderDimensions}
+            keyExtractor={(dimension) => dimension.id}
+            className="grid grid-cols-1 md:grid-cols-2 gap-3"
+            dropZoneClassName="bg-blue-50 border-2 border-dashed border-blue-300 rounded-lg"
+            renderItem={(dimension, index, isDragging) => (
+              <div className={`p-3 bg-primary-50 border border-primary-200 rounded-lg transition-all ${
+                isDragging ? 'shadow-lg ring-2 ring-blue-500 ring-opacity-50 transform rotate-1' : ''
+              }`}>
+                <div className="space-y-2">
+                  {/* Header with drag handle, icon and field info */}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      <div
+                        className="cursor-grab active:cursor-grabbing hover:bg-primary-100 p-1 rounded"
+                        title="Drag to reorder"
+                      >
+                        <GripVertical size={16} className="text-gray-400 hover:text-gray-600" />
+                      </div>
+                      {getIcon(dimension.dataType)}
+                      <div>
+                        <p className="text-sm text-gray-600">{dimension.source}.{dimension.field}</p>
+                      </div>
                     </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      icon={<Trash2 size={16} />}
+                      onClick={() => handleRemoveDimension(dimension.id, dimension.displayName || dimension.name)}
+                      className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                    />
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    icon={<Trash2 size={16} />}
-                    onClick={() => handleRemoveDimension(dimension.id, dimension.displayName || dimension.name)}
-                    className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                  >
-                    Remove
-                  </Button>
+                  
+                  {/* Editable display name */}
+                  <div className="space-y-1">
+                    <EditableItem
+                      id={dimension.id}
+                      value={dimension.displayName || dimension.name}
+                      label="Display Name"
+                      type="text"
+                      onSave={(id, value) => onUpdateDimension(id, { displayName: value })}
+                      icon={<Edit2 size={14} />}
+                      validation={(value) => !value.trim() ? 'Display name is required' : null}
+                    />
+                  </div>
+                  
+                  {/* Data type badge and order indicator */}
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-400">#{index + 1}</span>
+                    <span className="text-xs text-gray-500 bg-gray-200 px-2 py-1 rounded">
+                      {dimension.dataType}
+                    </span>
+                  </div>
                 </div>
               </div>
-            ))}
-          </div>
+            )}
+          />
         </div>
       )}
 

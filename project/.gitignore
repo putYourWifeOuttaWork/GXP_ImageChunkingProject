@@ -23,3 +23,26 @@ dist-ssr
 *.sln
 *.sw?
 .env
+
+# Meeting recordings
+meeting.m4a
+meeting.wav
+
+# Temporary SQL files
+check_*.sql
+diagnose_*.sql
+test_*.sql
+
+# Personal notes
+claude-*.md
+agent-swarm.md
+
+# Deployment scripts (may contain sensitive info)
+deploy_*.sh
+clean-logs.sh
+
+# Python scripts outside project
+../whisper_simple_control.py
+../history.md
+../supabase/
+EOF < /dev/null

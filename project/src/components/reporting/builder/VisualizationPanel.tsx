@@ -1,5 +1,5 @@
 import React from 'react';
-import { BarChart, LineChart, PieChart, Map, TrendingUp, Grid, Zap, Activity } from 'lucide-react';
+import { BarChart, LineChart, PieChart, Map, TrendingUp, Grid, Zap, Activity, Table } from 'lucide-react';
 import { ChartType, VisualizationSettings, Dimension, Measure } from '../../../types/reporting';
 
 interface VisualizationPanelProps {
@@ -19,6 +19,89 @@ export const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
   dimensions,
   measures,
 }) => {
+  // Default settings to prevent undefined errors
+  const defaultSettings: VisualizationSettings = {
+    chartType: chartType || 'line',
+    dimensions: { 
+      width: 800, 
+      height: 400,
+      margin: { top: 50, right: 120, bottom: 60, left: 65 }
+    },
+    colors: {
+      palette: ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#06B6D4', '#84CC16'],
+      scheme: 'default',
+      diverging: false,
+      customColors: {}
+    },
+    axes: {
+      x: {
+        show: true,
+        label: '',
+        gridLines: false,
+        tickFormat: 'auto',
+        tickAngle: 0,
+        tickCount: 'auto'
+      },
+      y: {
+        show: true,
+        label: '',
+        gridLines: true,
+        tickFormat: 'auto',
+        tickAngle: 0,
+        tickCount: 'auto'
+      }
+    },
+    legends: {
+      show: true,
+      position: 'bottom',
+      orientation: 'horizontal',
+      padding: 10,
+      itemSpacing: 20,
+      fontSize: 12,
+      fontFamily: 'Inter, system-ui, sans-serif',
+      color: '#374151',
+      backgroundColor: undefined,
+      borderColor: undefined,
+      borderWidth: 0,
+      maxItems: undefined,
+      truncateLabels: true,
+      truncateLength: 20
+    },
+    tooltips: {
+      show: true,
+      format: 'default',
+      backgroundColor: '#1F2937',
+      textColor: '#F9FAFB',
+      borderColor: '#374151',
+      borderWidth: 1,
+      borderRadius: 6,
+      padding: 12,
+      fontSize: 12,
+      fontFamily: 'Inter, system-ui, sans-serif'
+    },
+    animations: {
+      enabled: true,
+      duration: 750,
+      easing: 'easeInOut',
+      delay: 0
+    },
+    interactions: {
+      zoom: true,
+      pan: true,
+      hover: true,
+      click: true,
+      selection: false
+    },
+    specific: {}
+  };
+  
+  const mergedSettings = {
+    ...defaultSettings,
+    ...visualizationSettings,
+    dimensions: { ...defaultSettings.dimensions, ...visualizationSettings?.dimensions },
+    margins: { ...defaultSettings.margins, ...visualizationSettings?.margins },
+    displayOptions: { ...defaultSettings.displayOptions, ...visualizationSettings?.displayOptions }
+  };
   const chartOptions = [
     // Basic charts
     {
@@ -56,6 +139,15 @@ export const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
       category: 'Basic',
       requirements: { minDimensions: 1, minMeasures: 1 },
       bestFor: 'Part-to-whole relationships with few categories',
+    },
+    {
+      id: 'table',
+      name: 'Data Table',
+      icon: <Table size={24} />,
+      description: 'Display data in rows and columns',
+      category: 'Basic',
+      requirements: { minDimensions: 0, minMeasures: 0 },
+      bestFor: 'Detailed data analysis and precise values',
     },
     
     // Advanced charts
@@ -232,10 +324,10 @@ export const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
               </label>
               <input
                 type="number"
-                value={visualizationSettings.dimensions.width}
+                value={mergedSettings.dimensions.width}
                 onChange={(e) => onSettingsChange({
                   dimensions: {
-                    ...visualizationSettings.dimensions,
+                    ...mergedSettings.dimensions,
                     width: parseInt(e.target.value) || 800,
                   }
                 })}
@@ -250,10 +342,10 @@ export const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
               </label>
               <input
                 type="number"
-                value={visualizationSettings.dimensions.height}
+                value={mergedSettings.dimensions.height}
                 onChange={(e) => onSettingsChange({
                   dimensions: {
-                    ...visualizationSettings.dimensions,
+                    ...mergedSettings.dimensions,
                     height: parseInt(e.target.value) || 400,
                   }
                 })}
@@ -270,23 +362,29 @@ export const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                 Color Scheme
               </label>
               <select
-                value={visualizationSettings.colors.palette}
+                value={mergedSettings.colors.palette}
                 onChange={(e) => onSettingsChange({
                   colors: {
-                    ...visualizationSettings.colors,
+                    ...mergedSettings.colors,
                     palette: e.target.value,
                   }
                 })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
               >
-                <option value="category10">Category 10</option>
-                <option value="category20">Category 20</option>
-                <option value="blues">Blues</option>
-                <option value="greens">Greens</option>
-                <option value="reds">Reds</option>
-                <option value="viridis">Viridis</option>
-                <option value="plasma">Plasma</option>
-                <option value="inferno">Inferno</option>
+                <optgroup label="Colorblind Safe">
+                  <option value="colorblindSafe">Colorblind Safe (Default)</option>
+                  <option value="accessible">Accessible</option>
+                  <option value="viridis">Viridis (Scientific)</option>
+                  <option value="cividis">Cividis (Scientific)</option>
+                </optgroup>
+                <optgroup label="Standard">
+                  <option value="category10">Category 10</option>
+                  <option value="tableau10">Tableau 10</option>
+                </optgroup>
+                <optgroup label="Monochromatic">
+                  <option value="blues">Blues</option>
+                  <option value="greens">Greens</option>
+                </optgroup>
               </select>
             </div>
 
@@ -294,10 +392,10 @@ export const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
               <label className="flex items-center">
                 <input
                   type="checkbox"
-                  checked={visualizationSettings.legends.show}
+                  checked={mergedSettings.legends.show}
                   onChange={(e) => onSettingsChange({
                     legends: {
-                      ...visualizationSettings.legends,
+                      ...mergedSettings.legends,
                       show: e.target.checked,
                     }
                   })}
@@ -309,10 +407,10 @@ export const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
               <label className="flex items-center">
                 <input
                   type="checkbox"
-                  checked={visualizationSettings.tooltips.show}
+                  checked={mergedSettings.tooltips.show}
                   onChange={(e) => onSettingsChange({
                     tooltips: {
-                      ...visualizationSettings.tooltips,
+                      ...mergedSettings.tooltips,
                       show: e.target.checked,
                     }
                   })}
@@ -324,10 +422,10 @@ export const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
               <label className="flex items-center">
                 <input
                   type="checkbox"
-                  checked={visualizationSettings.animations.enabled}
+                  checked={mergedSettings.animations.enabled}
                   onChange={(e) => onSettingsChange({
                     animations: {
-                      ...visualizationSettings.animations,
+                      ...mergedSettings.animations,
                       enabled: e.target.checked,
                     }
                   })}
@@ -371,7 +469,7 @@ export const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
             <strong>Measures:</strong> {measures.length} selected
           </p>
           <p className="text-sm text-gray-600">
-            <strong>Size:</strong> {visualizationSettings.dimensions.width} × {visualizationSettings.dimensions.height}
+            <strong>Size:</strong> {mergedSettings.dimensions.width} × {mergedSettings.dimensions.height}
           </p>
         </div>
       </div>

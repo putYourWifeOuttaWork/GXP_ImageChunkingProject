@@ -5,6 +5,7 @@ import {
   Dimension, 
   Measure, 
   Filter, 
+  FilterGroup,
   DataSource,
   ChartType,
   VisualizationSettings,
@@ -78,7 +79,15 @@ const clearStateCache = () => {
 const consolidateDimensions = (dimensions: Dimension[]): Dimension[] => {
   const dimensionMap = new Map<string, Dimension>();
   
-  dimensions.forEach(dim => {
+  // Filter out any invalid dimensions first
+  const validDimensions = dimensions.filter(dim => dim && dim.field);
+  
+  if (validDimensions.length !== dimensions.length) {
+    console.warn(`Filtered out ${dimensions.length - validDimensions.length} invalid dimensions`);
+  }
+  
+  validDimensions.forEach(dim => {
+    
     // Use field name as the key for consolidation
     const key = dim.field;
     
@@ -114,6 +123,7 @@ export interface ReportBuilderState {
   dimensions: Dimension[];
   measures: Measure[];
   filters: Filter[];
+  filterGroups?: FilterGroup[];
   
   // Visualization
   chartType: ChartType;
@@ -125,6 +135,7 @@ export interface ReportBuilderState {
   selectedDimensions: string[];
   selectedMeasures: string[];
   selectedSegments: string[];
+  isolationFilters: Record<string, string[]>; // Selected isolation filter values
   previewData: any;
   
   // Validation
@@ -147,13 +158,19 @@ type ReportBuilderAction =
   | { type: 'REMOVE_DATA_SOURCE'; payload: string }
   | { type: 'ADD_DIMENSION'; payload: Dimension }
   | { type: 'UPDATE_DIMENSION'; payload: { id: string; updates: Partial<Dimension> } }
+  | { type: 'SET_DIMENSIONS'; payload: Dimension[] }
   | { type: 'REMOVE_DIMENSION'; payload: string }
   | { type: 'ADD_MEASURE'; payload: Measure }
   | { type: 'UPDATE_MEASURE'; payload: { id: string; updates: Partial<Measure> } }
+  | { type: 'SET_MEASURES'; payload: Measure[] }
   | { type: 'REMOVE_MEASURE'; payload: string }
   | { type: 'ADD_FILTER'; payload: Filter }
   | { type: 'UPDATE_FILTER'; payload: { id: string; updates: Partial<Filter> } }
   | { type: 'REMOVE_FILTER'; payload: string }
+  | { type: 'SET_FILTER_GROUPS'; payload: FilterGroup[] }
+  | { type: 'ADD_FILTER_GROUP'; payload: FilterGroup }
+  | { type: 'UPDATE_FILTER_GROUP'; payload: { id: string; updates: Partial<FilterGroup> } }
+  | { type: 'REMOVE_FILTER_GROUP'; payload: string }
   | { type: 'SET_CHART_TYPE'; payload: ChartType }
   | { type: 'UPDATE_VISUALIZATION_SETTINGS'; payload: Partial<VisualizationSettings> }
   | { type: 'SET_ACTIVE_STEP'; payload: number }
@@ -161,6 +178,7 @@ type ReportBuilderAction =
   | { type: 'SET_SELECTED_DIMENSIONS'; payload: string[] }
   | { type: 'SET_SELECTED_MEASURES'; payload: string[] }
   | { type: 'SET_SELECTED_SEGMENTS'; payload: string[] }
+  | { type: 'SET_ISOLATION_FILTERS'; payload: Record<string, string[]> }
   | { type: 'SET_PREVIEW_DATA'; payload: any }
   | { type: 'SET_ERRORS'; payload: Record<string, string> }
   | { type: 'SET_WARNINGS'; payload: Record<string, string> }
@@ -184,7 +202,7 @@ const initialState: ReportBuilderState = {
   chartType: 'line',
   visualizationSettings: {
     chartType: 'line',
-    dimensions: { width: 800, height: 400, margin: { top: 20, right: 20, bottom: 30, left: 50 } },
+    dimensions: { width: 1000, height: 400, margin: { top: 20, right: 20, bottom: 30, left: 50 } },
     colors: { scheme: 'categorical', palette: 'category10' },
     axes: { 
       x: { show: true, scale: 'linear', grid: { show: true } },
@@ -194,9 +212,9 @@ const initialState: ReportBuilderState = {
     tooltips: { show: true },
     animations: { enabled: true, duration: 300, easing: 'ease-in-out' },
     interactions: { 
-      zoom: { enabled: false, type: 'wheel', extent: [[0, 0], [800, 400]], scaleExtent: [1, 10] },
-      pan: { enabled: false, extent: [[0, 0], [800, 400]] },
-      brush: { enabled: true, type: 'x', extent: [[0, 0], [800, 400]] },
+      zoom: { enabled: false, type: 'wheel', extent: [[0, 0], [1000, 400]], scaleExtent: [1, 10] },
+      pan: { enabled: false, extent: [[0, 0], [1000, 400]] },
+      brush: { enabled: true, type: 'x', extent: [[0, 0], [1000, 400]] },
       selection: { enabled: true, mode: 'single' },
       hover: { enabled: true },
       click: { enabled: true, action: 'select' }
@@ -208,6 +226,7 @@ const initialState: ReportBuilderState = {
   selectedDimensions: [],
   selectedMeasures: [],
   selectedSegments: [],
+  isolationFilters: {},
   previewData: null,
   errors: {},
   warnings: {},
@@ -305,6 +324,13 @@ const reportBuilderReducer = (state: ReportBuilderState, action: ReportBuilderAc
         isDirty: true
       };
     
+    case 'SET_DIMENSIONS':
+      return {
+        ...state,
+        dimensions: action.payload,
+        isDirty: true
+      };
+    
     case 'REMOVE_DIMENSION':
       return {
         ...state,
@@ -326,6 +352,13 @@ const reportBuilderReducer = (state: ReportBuilderState, action: ReportBuilderAc
         measures: state.measures.map(measure => 
           measure.id === action.payload.id ? { ...measure, ...action.payload.updates } : measure
         ),
+        isDirty: true
+      };
+    
+    case 'SET_MEASURES':
+      return {
+        ...state,
+        measures: action.payload,
         isDirty: true
       };
     
@@ -357,6 +390,36 @@ const reportBuilderReducer = (state: ReportBuilderState, action: ReportBuilderAc
       return {
         ...state,
         filters: state.filters.filter(filter => filter.id !== action.payload),
+        isDirty: true
+      };
+    
+    case 'SET_FILTER_GROUPS':
+      return {
+        ...state,
+        filterGroups: action.payload,
+        isDirty: true
+      };
+    
+    case 'ADD_FILTER_GROUP':
+      return {
+        ...state,
+        filterGroups: [...(state.filterGroups || []), action.payload],
+        isDirty: true
+      };
+    
+    case 'UPDATE_FILTER_GROUP':
+      return {
+        ...state,
+        filterGroups: (state.filterGroups || []).map(group =>
+          group.id === action.payload.id ? { ...group, ...action.payload.updates } : group
+        ),
+        isDirty: true
+      };
+    
+    case 'REMOVE_FILTER_GROUP':
+      return {
+        ...state,
+        filterGroups: (state.filterGroups || []).filter(group => group.id !== action.payload),
         isDirty: true
       };
     
@@ -396,6 +459,9 @@ const reportBuilderReducer = (state: ReportBuilderState, action: ReportBuilderAc
     case 'SET_SELECTED_SEGMENTS':
       return { ...state, selectedSegments: action.payload };
     
+    case 'SET_ISOLATION_FILTERS':
+      return { ...state, isolationFilters: action.payload, isDirty: true };
+    
     case 'SET_PREVIEW_DATA':
       return { ...state, previewData: action.payload };
     
@@ -431,6 +497,8 @@ const reportBuilderReducer = (state: ReportBuilderState, action: ReportBuilderAc
         dimensions: action.payload.dimensions,
         measures: action.payload.measures,
         filters: action.payload.filters,
+        selectedSegments: action.payload.segmentBy || [],
+        isolationFilters: action.payload.isolationFilters || {},
         chartType: action.payload.chartType,
         visualizationSettings: action.payload.visualizationSettings,
         isDirty: false,
@@ -478,14 +546,23 @@ export const useReportBuilder = (initialReportId?: string) => {
   
   // Auto-save functionality
   useEffect(() => {
+    console.log('Auto-save check:', {
+      autoSave: state.autoSave,
+      isDirty: state.isDirty,
+      isValid: state.isValid,
+      initialReportId,
+      shouldAutoSave: state.autoSave && state.isDirty && state.isValid && initialReportId
+    });
+    
     if (state.autoSave && state.isDirty && state.isValid && initialReportId) {
       const timeoutId = setTimeout(() => {
+        console.log('Auto-saving report...');
         handleSave();
       }, 2000); // Auto-save after 2 seconds of inactivity
       
       return () => clearTimeout(timeoutId);
     }
-  }, [state.isDirty, state.isValid, state.autoSave, initialReportId]);
+  }, [state.isDirty, state.isValid, state.autoSave, initialReportId, handleSave]);
   
   // Validation
   useEffect(() => {
@@ -548,6 +625,10 @@ export const useReportBuilder = (initialReportId?: string) => {
     dispatch({ type: 'UPDATE_DIMENSION', payload: { id, updates } });
   }, []);
   
+  const setDimensions = useCallback((dimensions: Dimension[]) => {
+    dispatch({ type: 'SET_DIMENSIONS', payload: dimensions });
+  }, []);
+  
   const removeDimension = useCallback((id: string) => {
     dispatch({ type: 'REMOVE_DIMENSION', payload: id });
   }, []);
@@ -558,6 +639,10 @@ export const useReportBuilder = (initialReportId?: string) => {
   
   const updateMeasure = useCallback((id: string, updates: Partial<Measure>) => {
     dispatch({ type: 'UPDATE_MEASURE', payload: { id, updates } });
+  }, []);
+  
+  const setMeasures = useCallback((measures: Measure[]) => {
+    dispatch({ type: 'SET_MEASURES', payload: measures });
   }, []);
   
   const removeMeasure = useCallback((id: string) => {
@@ -574,6 +659,10 @@ export const useReportBuilder = (initialReportId?: string) => {
   
   const removeFilter = useCallback((id: string) => {
     dispatch({ type: 'REMOVE_FILTER', payload: id });
+  }, []);
+  
+  const updateFilterGroups = useCallback((groups: FilterGroup[]) => {
+    dispatch({ type: 'SET_FILTER_GROUPS', payload: groups });
   }, []);
   
   const setChartType = useCallback((chartType: ChartType) => {
@@ -602,6 +691,11 @@ export const useReportBuilder = (initialReportId?: string) => {
   
   const setSelectedSegments = useCallback((segments: string[]) => {
     dispatch({ type: 'SET_SELECTED_SEGMENTS', payload: segments });
+  }, []);
+  
+  const setIsolationFilters = useCallback((filters: Record<string, string[]>) => {
+    console.log('setIsolationFilters called with:', filters);
+    dispatch({ type: 'SET_ISOLATION_FILTERS', payload: filters });
   }, []);
   
   const loadReport = useCallback((report: ReportConfiguration) => {
@@ -650,30 +744,8 @@ export const useReportBuilder = (initialReportId?: string) => {
       // Consolidate duplicate dimensions before saving
       const consolidatedDimensions = consolidateDimensions(state.dimensions);
       
-      // Add segmentation dimensions if selected
-      const segmentDimensions: Dimension[] = [];
-      if (state.selectedSegments.length > 0) {
-        const primarySource = state.dataSources.find(ds => ds.isPrimary) || state.dataSources[0];
-        
-        state.selectedSegments.forEach(segmentField => {
-          if (!consolidatedDimensions.some(d => d.field === segmentField)) {
-            segmentDimensions.push({
-              id: `segment_${segmentField}`,
-              name: segmentField,
-              field: segmentField,
-              displayName: segmentField === 'program_id' ? 'Program' : 
-                          segmentField === 'site_id' ? 'Site' :
-                          segmentField === 'submission_id' ? 'Submission' :
-                          segmentField === 'user_id' ? 'User' : segmentField,
-              type: 'grouping',
-              source: primarySource.id,
-              dataType: 'text'
-            });
-          }
-        });
-      }
-      
-      const allDimensions = [...segmentDimensions, ...consolidatedDimensions];
+      // Don't add segments as dimensions - they should remain separate
+      // Segments are handled via the segmentBy field in the report config
       
       const reportData: any = {
         name: state.name,
@@ -681,10 +753,11 @@ export const useReportBuilder = (initialReportId?: string) => {
         category: state.category,
         type: state.type,
         dataSources: state.dataSources,
-        dimensions: allDimensions,
+        dimensions: consolidatedDimensions,
         measures: state.measures,
         filters: state.filters,
         segmentBy: state.selectedSegments, // Add segmentBy for SQL query generation
+        isolationFilters: state.isolationFilters, // Add selected isolation filter values
         chartType: state.chartType,
         visualizationSettings: state.visualizationSettings,
         queryCacheTtl: 3600,
@@ -748,38 +821,13 @@ export const useReportBuilder = (initialReportId?: string) => {
       // Consolidate duplicate dimensions before creating report config
       const consolidatedDimensions = consolidateDimensions(state.dimensions);
       
-      // Add segmentation dimensions automatically based on selectedSegments
-      const segmentDimensions: Dimension[] = [];
-      if (state.selectedSegments.length > 0) {
-        // Find the primary data source to use as reference
-        const primarySource = state.dataSources.find(ds => ds.isPrimary) || state.dataSources[0];
-        
-        state.selectedSegments.forEach(segmentField => {
-          // Check if dimension already exists
-          if (!consolidatedDimensions.some(d => d.field === segmentField)) {
-            segmentDimensions.push({
-              id: `segment_${segmentField}`,
-              name: segmentField,
-              field: segmentField,
-              displayName: segmentField === 'program_id' ? 'Program' : 
-                          segmentField === 'site_id' ? 'Site' :
-                          segmentField === 'submission_id' ? 'Submission' :
-                          segmentField === 'user_id' ? 'User' : segmentField,
-              type: 'grouping',
-              source: primarySource.id,
-              dataType: 'text'
-            });
-          }
-        });
-      }
-      
-      // Combine regular dimensions with segment dimensions
-      const allDimensions = [...segmentDimensions, ...consolidatedDimensions];
+      // Don't add segments as dimensions - they should remain separate
+      // Segments are handled via the segmentBy field in the report config
       
       // Build report config from current state
       console.log('Debug: generatePreview filters:', state.filters.length, state.filters);
       console.log('Debug: generatePreview segments:', state.selectedSegments);
-      console.log('Debug: generatePreview dimensions with segments:', allDimensions.length);
+      console.log('Debug: generatePreview dimensions (without segments):', consolidatedDimensions.length);
       
       const reportConfig: ReportConfig = {
         id: 'preview',
@@ -788,10 +836,11 @@ export const useReportBuilder = (initialReportId?: string) => {
         category: state.category,
         type: state.type,
         dataSources: state.dataSources,
-        dimensions: allDimensions,
+        dimensions: consolidatedDimensions,
         measures: state.measures,
         filters: state.filters,
         segmentBy: state.selectedSegments, // Add segmentBy for SQL query generation
+        isolationFilters: state.isolationFilters, // Add selected isolation filter values
         chartType: state.chartType,
         visualizationSettings: state.visualizationSettings,
         createdByUserId: '',
@@ -826,6 +875,11 @@ export const useReportBuilder = (initialReportId?: string) => {
     }
   }, [state]);
   
+  // Function to mark the report as saved (clears unsaved changes)
+  const markAsSaved = useCallback(() => {
+    dispatch({ type: 'SET_LAST_SAVED', payload: new Date().toISOString() });
+  }, []);
+
   return {
     // State
     state,
@@ -837,13 +891,16 @@ export const useReportBuilder = (initialReportId?: string) => {
     removeDataSource,
     addDimension,
     updateDimension,
+    setDimensions,
     removeDimension,
     addMeasure,
     updateMeasure,
+    setMeasures,
     removeMeasure,
     addFilter,
     updateFilter,
     removeFilter,
+    updateFilterGroups,
     setChartType,
     updateVisualizationSettings,
     setActiveStep,
@@ -851,8 +908,10 @@ export const useReportBuilder = (initialReportId?: string) => {
     setSelectedDimensions,
     setSelectedMeasures,
     setSelectedSegments,
+    setIsolationFilters,
     loadReport,
     resetState,
+    markAsSaved,
     
     // Operations
     save: handleSave,

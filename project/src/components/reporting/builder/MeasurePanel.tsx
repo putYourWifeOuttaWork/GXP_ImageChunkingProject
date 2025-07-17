@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
-import { Plus, BarChart, TrendingUp, Calculator, Hash, Percent, Trash2 } from 'lucide-react';
+import { Plus, BarChart, TrendingUp, Calculator, Hash, Percent, Trash2, Edit2 } from 'lucide-react';
 import Button from '../../common/Button';
 import { Measure, DataSource } from '../../../types/reporting';
+import { EditableItem } from './components/EditableItem';
 
 interface MeasurePanelProps {
   measures: Measure[];
   onAddMeasure: (measure: Measure) => void;
+  onUpdateMeasure: (id: string, updates: Partial<Measure>) => void;
   onRemoveMeasure: (id: string) => void;
   selectedMeasures: string[];
   onSelectionChange: (selectedIds: string[]) => void;
@@ -16,6 +18,7 @@ interface MeasurePanelProps {
 export const MeasurePanel: React.FC<MeasurePanelProps> = ({
   measures,
   onAddMeasure,
+  onUpdateMeasure,
   onRemoveMeasure,
   selectedMeasures,
   onSelectionChange,
@@ -27,7 +30,7 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
     name: '',
     field: '',
     dataSource: '',
-    aggregation: 'sum' as const,
+    aggregation: 'none' as const,
     dataType: 'number' as const,
     displayName: '',
   });
@@ -98,6 +101,15 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
       icon: <Percent size={16} />,
       description: 'Average outdoor humidity'
     },
+    { 
+      table: 'petri_observations_partitioned', 
+      field: 'experimental_role', 
+      name: 'Experimental Role Count', 
+      aggregation: 'count' as const,
+      dataType: 'string' as const, 
+      icon: <Hash size={16} />,
+      description: 'Count of experimental roles (Control, Treatment, etc.)'
+    },
     
     // Gasifier observation measures
     { 
@@ -121,11 +133,11 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
     { 
       table: 'gasifier_observations_partitioned', 
       field: 'linear_reduction_per_day', 
-      name: 'Daily Reduction', 
+      name: 'Momentum of Flow', 
       aggregation: 'avg' as const,
       dataType: 'number' as const, 
       icon: <TrendingUp size={16} />,
-      description: 'Average daily reduction rate'
+      description: 'Average momentum of flow'
     },
     { 
       table: 'gasifier_observations_partitioned', 
@@ -291,6 +303,7 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
   ];
 
   const aggregationOptions = [
+    { value: 'none', label: 'None (Raw Values)', icon: <Hash size={16} /> },
     { value: 'sum', label: 'Sum', icon: <Plus size={16} /> },
     { value: 'avg', label: 'Average', icon: <BarChart size={16} /> },
     { value: 'count', label: 'Count', icon: <Hash size={16} /> },
@@ -382,30 +395,59 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
                 key={measure.id}
                 className="p-3 border border-gray-200 rounded-lg bg-gray-50"
               >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center">
-                    {getIconForAggregation(measure.aggregation)}
-                    <div className="ml-3">
-                      <h5 className="font-medium text-gray-900">{measure.displayName || measure.name}</h5>
-                      <p className="text-sm text-gray-600">{measure.aggregation}({measure.field})</p>
+                <div className="space-y-2">
+                  {/* Header with icon and field info */}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center">
+                      {getIconForAggregation(measure.aggregation)}
+                      <div className="ml-3">
+                        <p className="text-sm text-gray-600">{measure.aggregation}({measure.field})</p>
+                      </div>
                     </div>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <span className="text-xs text-gray-500 bg-gray-200 px-2 py-1 rounded">
-                      {measure.aggregation}
-                    </span>
-                    <span className="text-xs text-gray-500 bg-gray-200 px-2 py-1 rounded">
-                      {measure.dataType}
-                    </span>
                     <Button
                       variant="ghost"
                       size="sm"
                       icon={<Trash2 size={16} />}
                       onClick={() => handleRemoveMeasure(measure.id, measure.displayName || measure.name)}
                       className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                    >
-                      Remove
-                    </Button>
+                    />
+                  </div>
+                  
+                  {/* Editable fields */}
+                  <div className="space-y-1">
+                    <EditableItem
+                      id={measure.id}
+                      value={measure.displayName || measure.name}
+                      label="Display Name"
+                      type="text"
+                      onSave={(id, value) => onUpdateMeasure(id, { displayName: value })}
+                      icon={<Edit2 size={14} />}
+                      validation={(value) => !value.trim() ? 'Display name is required' : null}
+                    />
+                    
+                    <EditableItem
+                      id={measure.id}
+                      value={measure.aggregation}
+                      label="Aggregation"
+                      type="select"
+                      options={[
+                        { value: 'sum', label: 'Sum' },
+                        { value: 'avg', label: 'Average' },
+                        { value: 'count', label: 'Count' },
+                        { value: 'min', label: 'Minimum' },
+                        { value: 'max', label: 'Maximum' },
+                        { value: 'none', label: 'None (Raw)' }
+                      ]}
+                      onSave={(id, value) => onUpdateMeasure(id, { aggregation: value })}
+                      icon={<Calculator size={14} />}
+                    />
+                  </div>
+                  
+                  {/* Data type badge */}
+                  <div className="flex items-center justify-end">
+                    <span className="text-xs text-gray-500 bg-gray-200 px-2 py-1 rounded">
+                      {measure.dataType}
+                    </span>
                   </div>
                 </div>
               </div>

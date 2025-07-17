@@ -3,6 +3,7 @@ import { Plus, Database, Table, Link, Search, Settings, Trash2, X, CheckCircle, 
 import Button from '../../common/Button';
 import { DataSource, DataSourceField, DataSourceRelationship } from '../../../types/reporting';
 import { ReportingDataService } from '../../../services/reportingDataService';
+import { supabase } from '../../../lib/supabaseClient';
 
 interface DataSourcePanelProps {
   dataSources: DataSource[];
@@ -525,14 +526,51 @@ const AddRelationshipDialog: React.FC<{
   const [cardinality, setCardinality] = useState<DataSourceRelationship['cardinality']>('many-to-one');
   const [joinType, setJoinType] = useState<DataSourceRelationship['joinType']>('inner');
   const [targetFields, setTargetFields] = useState<DataSourceField[]>([]);
+  const [loadingTargetFields, setLoadingTargetFields] = useState(false);
 
   // Load target fields when target source changes
   useEffect(() => {
-    if (!toSource) return;
+    if (!toSource) {
+      setTargetFields([]);
+      return;
+    }
     
     const targetDs = targetDataSources.find(ds => ds.id === toSource);
-    if (targetDs?.availableFields) {
+    if (targetDs?.availableFields && targetDs.availableFields.length > 0) {
       setTargetFields(targetDs.availableFields);
+    } else if (targetDs) {
+      // If target data source doesn't have available fields loaded, load them
+      const loadTargetFields = async () => {
+        setLoadingTargetFields(true);
+        try {
+          const { data: tableColumns } = await supabase
+            .rpc('get_table_columns', { table_name: targetDs.table });
+          
+          if (tableColumns && tableColumns.length > 0) {
+            const fields = tableColumns.map(col => ({
+              name: col.column_name,
+              displayName: col.column_name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+              dataType: col.data_type === 'integer' ? 'number' : 
+                       col.data_type === 'timestamp with time zone' ? 'date' : 
+                       col.data_type === 'boolean' ? 'boolean' : 'string',
+              isSelected: false,
+              isPrimaryKey: col.column_name === 'id' || col.column_name.endsWith('_id'),
+              isForeignKey: col.column_name.endsWith('_id') && col.column_name !== 'id',
+              relatedTable: col.column_name.endsWith('_id') ? col.column_name.replace('_id', '') : undefined,
+              relatedField: col.column_name.endsWith('_id') ? 'id' : undefined,
+            }));
+            
+            setTargetFields(fields);
+          }
+        } catch (error) {
+          console.error('Failed to load target fields:', error);
+          setTargetFields([]);
+        } finally {
+          setLoadingTargetFields(false);
+        }
+      };
+      
+      loadTargetFields();
     }
   }, [toSource, targetDataSources]);
 
@@ -615,8 +653,11 @@ const AddRelationshipDialog: React.FC<{
                 value={toField}
                 onChange={(e) => setToField(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                disabled={loadingTargetFields}
               >
-                <option value="">Select field...</option>
+                <option value="">
+                  {loadingTargetFields ? 'Loading fields...' : 'Select field...'}
+                </option>
                 {targetFields.map(field => (
                   <option key={field.name} value={field.name}>
                     {field.displayName} ({field.dataType})

@@ -109,40 +109,45 @@ export const useReport = (reportId: string) => {
     queryKey: reportQueryKeys.detail(reportId),
     queryFn: async (): Promise<ReportConfiguration> => {
       const { data, error } = await supabase
-        .from('custom_reports')
+        .from('saved_reports')
         .select('*')
         .eq('report_id', reportId)
         .single();
 
       if (error) throw error;
 
+      // The report_config contains the full state from useReportBuilder
+      const config = data.report_config || {};
+      
       return {
         id: data.report_id,
-        name: data.name,
-        description: data.description,
-        category: data.category,
-        type: data.report_type,
-        createdByUserId: data.created_by_user_id,
+        name: config.name || data.report_name,
+        description: config.description || data.description,
+        category: config.category || 'analytics',
+        type: config.type || data.report_type || 'chart',
+        createdByUserId: data.created_by,
         companyId: data.company_id,
-        programIds: data.program_ids || [],
-        isPublic: data.is_public,
+        programIds: config.dataSources?.map((ds: any) => ds.programId).filter(Boolean) || [],
+        isPublic: false,
         isTemplate: data.is_template,
-        dataSources: data.data_sources || [],
-        dimensions: data.dimensions || [],
-        measures: data.measures || [],
-        filters: data.filters || [],
-        sorting: [], // TODO: Add sorting to schema
-        chartType: data.visualization_config?.chartType || 'line',
-        visualizationSettings: data.visualization_config || {},
-        formatting: {}, // TODO: Add formatting to schema
-        interactivity: {}, // TODO: Add interactivity to schema
+        dataSources: config.dataSources || [],
+        dimensions: config.dimensions || [],
+        measures: config.measures || [],
+        filters: config.filters || [],
+        sorting: config.sorting || [],
+        segmentBy: config.selectedSegments || data.data_source_config?.selectedSegments || [],
+        isolationFilters: config.isolationFilters || {},
+        chartType: config.chartType || 'line',
+        visualizationSettings: config.visualizationSettings || {},
+        formatting: config.formatting || {},
+        interactivity: config.interactivity || {},
         queryCacheTtl: 3600, // 1 hour default
-        autoRefresh: data.auto_refresh || false,
-        refreshFrequency: data.refresh_frequency || undefined,
+        autoRefresh: data.auto_refresh_enabled || false,
+        refreshFrequency: data.refresh_interval_hours ? data.refresh_interval_hours * 3600 : undefined,
         tags: data.tags || [],
-        version: data.version,
-        lastRefreshedAt: data.last_refreshed_at,
-        viewCount: data.view_count,
+        version: data.version || 1,
+        lastRefreshedAt: data.last_refresh_at,
+        viewCount: data.access_count || 0,
         createdAt: data.created_at,
         updatedAt: data.updated_at,
       };

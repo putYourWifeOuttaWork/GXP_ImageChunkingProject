@@ -17,7 +17,7 @@ Deno.serve(async (req) => {
       status: 204,
       headers: {
         "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET",
+        "Access-Control-Allow-Methods": "GET, POST",
         "Access-Control-Allow-Headers": "Content-Type",
       },
     });
@@ -68,41 +68,67 @@ Deno.serve(async (req) => {
       );
     }
     
-    // Process each pending observation - in a real implementation, 
-    // you'd likely just trigger a webhook or call another function to do this
+    // Process each pending observation
     const results = [];
     
     for (const observation of pendingObservations) {
       console.log(`Triggering split processing for observation: ${observation.observation_id}`);
       
-      // In a real implementation, you would call your process_split_petris function or webhook
-      // For now, just make a note that it would be processed
-      results.push({
-        observation_id: observation.observation_id,
-        status: "triggered"
-      });
-      
-      // Call the process_split_petris function (in a real implementation)
-      // const processingResponse = await fetch(
-      //   `${supabaseUrl}/functions/v1/process_split_petris`,
-      //   {
-      //     method: "POST",
-      //     headers: {
-      //       "Content-Type": "application/json",
-      //       "Authorization": `Bearer ${supabaseServiceKey}`
-      //     },
-      //     body: JSON.stringify({ observationId: observation.observation_id })
-      //   }
-      // );
-      // 
-      // const processingResult = await processingResponse.json();
-      // results.push(processingResult);
+      try {
+        // Call the process_split_petris function
+        const processingResponse = await fetch(
+          `${supabaseUrl}/functions/v1/process_split_petris`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${supabaseServiceKey}`
+            },
+            body: JSON.stringify({ observationId: observation.observation_id })
+          }
+        );
+        
+        if (!processingResponse.ok) {
+          const errorText = await processingResponse.text();
+          console.error(`Failed to process observation ${observation.observation_id}:`, errorText);
+          results.push({
+            observation_id: observation.observation_id,
+            status: "failed",
+            error: `HTTP ${processingResponse.status}: ${errorText}`
+          });
+          continue;
+        }
+        
+        const processingResult = await processingResponse.json();
+        results.push({
+          observation_id: observation.observation_id,
+          status: processingResult.success ? "completed" : "failed",
+          result: processingResult
+        });
+        
+      } catch (error) {
+        console.error(`Error processing observation ${observation.observation_id}:`, error);
+        results.push({
+          observation_id: observation.observation_id,
+          status: "failed",
+          error: error.message
+        });
+      }
     }
+    
+    // Calculate summary
+    const completedCount = results.filter(r => r.status === "completed").length;
+    const failedCount = results.filter(r => r.status === "failed").length;
     
     return new Response(
       JSON.stringify({ 
         success: true, 
-        message: `Triggered processing for ${pendingObservations.length} observations`,
+        message: `Processed ${pendingObservations.length} observations`,
+        summary: {
+          total: pendingObservations.length,
+          completed: completedCount,
+          failed: failedCount
+        },
         results 
       }),
       {

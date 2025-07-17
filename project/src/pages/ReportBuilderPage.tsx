@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { Plus, Save, Eye, Settings, Filter, BarChart3, ArrowLeft, AlertCircle, CheckCircle, RotateCcw, Zap } from 'lucide-react';
 import Button from '../components/common/Button';
 import Card from '../components/common/Card';
@@ -13,10 +13,16 @@ import { VisualizationPanel } from '../components/reporting/builder/Visualizatio
 import { PreviewPanel } from '../components/reporting/builder/PreviewPanel';
 import { DatabaseConnectionTest } from '../components/reporting/builder/DatabaseConnectionTest';
 import { ConfigurationTrail } from '../components/reporting/builder/ConfigurationTrail';
+import SaveReportModal from '../components/reports/SaveReportModal';
 
 const ReportBuilderPage: React.FC = () => {
-  const { reportId } = useParams<{ reportId?: string }>();
+  const { reportId: urlReportId } = useParams<{ reportId?: string }>();
+  const [searchParams] = useSearchParams();
+  const queryReportId = searchParams.get('edit');
   const navigate = useNavigate();
+  
+  // Check both URL param and query param for report ID
+  const reportId = urlReportId || queryReportId || undefined;
   const isEditing = !!reportId;
   
   // Load existing report if editing
@@ -30,14 +36,20 @@ const ReportBuilderPage: React.FC = () => {
     updateDataSource,
     removeDataSource,
     addDimension,
+    updateDimension,
+    setDimensions,
     removeDimension,
     addMeasure,
+    updateMeasure,
     removeMeasure,
     addFilter,
+    updateFilter,
     removeFilter,
+    updateFilterGroups,
     setChartType,
     setActiveStep,
     setSelectedSegments,
+    setIsolationFilters,
     save,
     generatePreview,
     getAvailableDimensions,
@@ -50,25 +62,98 @@ const ReportBuilderPage: React.FC = () => {
     hasDuplicateDimensions,
     duplicateCount,
     consolidateDimensions,
+    markAsSaved,
   } = useReportBuilder(reportId);
 
-  // Load existing report data
+  // Modal states
+  const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
+  const [previewData, setPreviewData] = useState<any>(null);
+  const [editReportId, setEditReportId] = useState<string | null>(null);
+  const [isSaveAs, setIsSaveAs] = useState(false);
+
+  // Load existing report data or reset for new report
   useEffect(() => {
-    if (existingReport && !loadingReport) {
+    if (!reportId) {
+      // Creating a new report - reset state to clear any cached data
+      resetState();
+    } else if (existingReport && !loadingReport) {
+      // Editing existing report - load the data
       loadReport(existingReport);
+      setEditReportId(reportId);
     }
-  }, [existingReport, loadingReport, loadReport]);
+  }, [existingReport, loadingReport, loadReport, reportId, resetState]);
+
+  // Handle save modal success
+  const handleSaveSuccess = (savedReportId: string) => {
+    console.log('Save success callback called with ID:', savedReportId);
+    console.log('Is Save As?', isSaveAs);
+    
+    setIsSaveModalOpen(false);
+    
+    if (!savedReportId) {
+      console.error('No report ID provided in save success callback');
+      return;
+    }
+    
+    // Reset the unsaved changes state after successful save
+    markAsSaved();
+    
+    if (isSaveAs) {
+      // For Save As, navigate to the new report in edit mode
+      console.log('Navigating to new report in edit mode:', `/reports/${savedReportId}`);
+      navigate(`/reports/${savedReportId}`);
+    } else {
+      // For regular save, stay on the same page (already saved)
+      console.log('Staying on current page after save');
+      // Update the edit report ID to the newly saved report ID
+      setEditReportId(savedReportId);
+    }
+  };
 
   // Handle save
   const handleSave = async () => {
+    // Check if report is valid before saving
+    if (!state.isValid) {
+      alert('Please fix the validation errors before saving the report.');
+      return;
+    }
+    
+    // Generate preview data before opening save modal
     try {
-      await save();
-      // Show success message and navigate
-      alert('Report created successfully!');
-      navigate('/reports');
+      const preview = await generatePreview();
+      setPreviewData(preview);
+      setIsSaveAs(false);
+      setIsSaveModalOpen(true);
     } catch (error) {
-      console.error('Error saving report:', error);
-      alert('Failed to create report. Please try again.');
+      console.error('Preview generation failed:', error);
+      // Still allow saving even if preview fails
+      setPreviewData(null);
+      setIsSaveAs(false);
+      setIsSaveModalOpen(true);
+    }
+  };
+
+  // Handle save as new report
+  const handleSaveAs = async () => {
+    // Check if report is valid before saving
+    if (!state.isValid) {
+      alert('Please fix the validation errors before saving the report.');
+      return;
+    }
+    
+    // For Save As, we don't need to wait for preview - just open the modal
+    setIsSaveAs(true);
+    setIsSaveModalOpen(true);
+    
+    // Generate preview data in the background (optional)
+    try {
+      const preview = await generatePreview();
+      if (preview) {
+        setPreviewData(preview);
+      }
+    } catch (error) {
+      console.warn('Preview generation failed for Save As:', error);
+      // Continue without preview data
     }
   };
 
@@ -187,6 +272,8 @@ const ReportBuilderPage: React.FC = () => {
           <DimensionPanel
             dimensions={state.dimensions}
             onAddDimension={addDimension}
+            onUpdateDimension={updateDimension}
+            onReorderDimensions={setDimensions}
             onRemoveDimension={removeDimension}
             selectedDimensions={state.selectedDimensions}
             onSelectionChange={() => {}}
@@ -199,6 +286,7 @@ const ReportBuilderPage: React.FC = () => {
           <MeasurePanel
             measures={state.measures}
             onAddMeasure={addMeasure}
+            onUpdateMeasure={updateMeasure}
             onRemoveMeasure={removeMeasure}
             selectedMeasures={state.selectedMeasures}
             onSelectionChange={() => {}}
@@ -210,8 +298,10 @@ const ReportBuilderPage: React.FC = () => {
         return (
           <FilterPanel
             filters={state.filters}
+            filterGroups={state.filterGroups}
             onAddFilter={addFilter}
             onRemoveFilter={removeFilter}
+            onUpdateFilterGroups={updateFilterGroups}
             dimensions={state.dimensions}
             measures={state.measures}
             dataSources={state.dataSources}
@@ -237,6 +327,7 @@ const ReportBuilderPage: React.FC = () => {
             isLoading={isLoading}
             onGeneratePreview={handlePreview}
             reportConfig={state}
+            onIsolationFiltersChange={setIsolationFilters}
           />
         );
       default:
@@ -309,16 +400,40 @@ const ReportBuilderPage: React.FC = () => {
                 {isLoading ? 'Loading...' : 'Preview'}
               </Button>
               
-              <Button
-                variant="primary"
-                size="sm"
-                icon={<Save size={16} />}
-                onClick={handleSave}
-                disabled={!canSave || isLoading}
-                isLoading={isLoading}
-              >
-                {isEditing ? 'Save Changes' : 'Create Report'}
-              </Button>
+              {isEditing ? (
+                <>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    icon={<Save size={16} />}
+                    onClick={handleSaveAs}
+                    disabled={!state.isValid || isLoading}
+                  >
+                    Save As
+                  </Button>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    icon={<Save size={16} />}
+                    onClick={handleSave}
+                    disabled={!state.isValid || isLoading}
+                    isLoading={isLoading}
+                  >
+                    Save Changes
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  icon={<Save size={16} />}
+                  onClick={handleSave}
+                  disabled={!canSave || isLoading}
+                  isLoading={isLoading}
+                >
+                  Create Report
+                </Button>
+              )}
             </div>
           </div>
         </div>
@@ -381,6 +496,18 @@ const ReportBuilderPage: React.FC = () => {
           </div>
         </div>
       </div>
+      
+      {/* Save Report Modal */}
+      <SaveReportModal
+        isOpen={isSaveModalOpen}
+        onClose={() => setIsSaveModalOpen(false)}
+        onSuccess={handleSaveSuccess}
+        reportConfig={state}
+        reportData={previewData}
+        existingReportId={editReportId || undefined}
+        reportType="standard"
+        isSaveAs={isSaveAs}
+      />
     </div>
   );
 };
