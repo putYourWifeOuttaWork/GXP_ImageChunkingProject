@@ -34,6 +34,9 @@ const AuditLogPage = lazy(() => import('./pages/AuditLogPage'));
 const CompanyManagementPage = lazy(() => import('./pages/CompanyManagementPage'));
 const UserAuditPage = lazy(() => import('./pages/UserAuditPage'));
 const ReportBuilderPage = lazy(() => import('./pages/ReportBuilderPage'));
+const ReportsPage = lazy(() => import('./pages/ReportsPage'));
+const TestFacilityMapPage = lazy(() => import('./pages/TestFacilityMapPage'));
+const EnhancedFacilityMapPage = lazy(() => import('./pages/EnhancedFacilityMapPage'));
 
 function App() {
   const navigate = useNavigate();
@@ -44,6 +47,21 @@ function App() {
   const [pendingCount, setPendingCount] = useState(0);
   const [authError, setAuthError] = useState<Error | null>(null);
   const [isUserDeactivated, setIsUserDeactivated] = useState(false);
+  
+  // Development helper - expose migration function to console
+  useEffect(() => {
+    if (import.meta.env.DEV) {
+      (window as any).runReportMigration = async () => {
+        const { runFullMigration } = await import('./utils/runReportMigration');
+        return await runFullMigration();
+      };
+      
+      (window as any).testReportMigration = async () => {
+        const { testReportMigration } = await import('./utils/testReportMigration');
+        return await testReportMigration();
+      };
+    }
+  }, []);
   
   // Session management from session store
   const { 
@@ -387,12 +405,27 @@ function App() {
               } />
               <Route path="/reports" element={
                 <Suspense fallback={<LoadingScreen />}>
+                  <ReportsPage />
+                </Suspense>
+              } />
+              <Route path="/reports/builder" element={
+                <Suspense fallback={<LoadingScreen />}>
                   <ReportBuilderPage />
                 </Suspense>
               } />
-              <Route path="/reports/new" element={
+              <Route path="/reports/:reportId" element={
                 <Suspense fallback={<LoadingScreen />}>
                   <ReportBuilderPage />
+                </Suspense>
+              } />
+              <Route path="/test-facility-map" element={
+                <Suspense fallback={<LoadingScreen />}>
+                  <TestFacilityMapPage />
+                </Suspense>
+              } />
+              <Route path="/facility-map" element={
+                <Suspense fallback={<LoadingScreen />}>
+                  <EnhancedFacilityMapPage />
                 </Suspense>
               } />
             </Route>
