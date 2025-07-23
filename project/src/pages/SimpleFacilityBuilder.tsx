@@ -2,6 +2,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import { SimpleFacilityFloorPlan } from '../components/mapping/SimpleFacilityFloorPlan';
 import { supabase } from '../lib/supabaseClient';
 
+// Constants for localStorage caching
+const FACILITY_BUILDER_CACHE_KEY = 'gasx_facility_builder_state';
+const CACHE_EXPIRY_HOURS = 24;
+
 interface Equipment {
   equipment_id: string;
   type: 'petri_dish' | 'gasifier' | 'sensor' | 'vent' | 'shelving' | 'door' | 'fan';
@@ -52,6 +56,8 @@ const SimpleFacilityBuilder: React.FC = () => {
   const [selectedEquipmentIds, setSelectedEquipmentIds] = useState<string[]>([]);
   const [ghostDragEquipment, setGhostDragEquipment] = useState<Equipment | null>(null);
   const [cursorPosition, setCursorPosition] = useState({ x: 0, y: 0 });
+  const [showDebugBoundaries, setShowDebugBoundaries] = useState(false); // Debug mode off by default
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   
   // Undo/Redo history
   const [history, setHistory] = useState<Equipment[][]>([]);
@@ -63,6 +69,72 @@ const SimpleFacilityBuilder: React.FC = () => {
   const selectedEquipmentIdsRef = useRef<string[]>([]);
   const facilityDataRef = useRef<FacilityData | null>(null);
   
+  // Cache utilities
+  const saveToCache = () => {
+    if (!facilityData || !selectedSiteId) return;
+    
+    try {
+      const cacheData = {
+        siteId: selectedSiteId,
+        facilityData: facilityData,
+        history: history,
+        historyIndex: historyIndex,
+        timestamp: Date.now(),
+        version: '1.0'
+      };
+      localStorage.setItem(FACILITY_BUILDER_CACHE_KEY, JSON.stringify(cacheData));
+    } catch (error) {
+      console.warn('Failed to save facility builder state to cache:', error);
+    }
+  };
+
+  const loadFromCache = (siteId: string): boolean => {
+    try {
+      const cached = localStorage.getItem(FACILITY_BUILDER_CACHE_KEY);
+      if (!cached) return false;
+      
+      const cacheData = JSON.parse(cached);
+      const { siteId: cachedSiteId, facilityData: cachedFacilityData, history: cachedHistory, historyIndex: cachedHistoryIndex, timestamp, version } = cacheData;
+      
+      // Check if cache is for the same site
+      if (cachedSiteId !== siteId) return false;
+      
+      // Check if cache is expired
+      const hoursAgo = (Date.now() - timestamp) / (1000 * 60 * 60);
+      if (hoursAgo > CACHE_EXPIRY_HOURS) {
+        localStorage.removeItem(FACILITY_BUILDER_CACHE_KEY);
+        return false;
+      }
+      
+      // Version check
+      if (version !== '1.0') {
+        localStorage.removeItem(FACILITY_BUILDER_CACHE_KEY);
+        return false;
+      }
+      
+      // Restore cached state
+      setFacilityData(cachedFacilityData);
+      setHistory(cachedHistory || [cachedFacilityData.equipment]);
+      setHistoryIndex(cachedHistoryIndex || 0);
+      setHasUnsavedChanges(true);
+      
+      showToast('Restored unsaved changes from cache');
+      return true;
+    } catch (error) {
+      console.warn('Failed to load facility builder state from cache:', error);
+      localStorage.removeItem(FACILITY_BUILDER_CACHE_KEY);
+      return false;
+    }
+  };
+
+  const clearCache = () => {
+    try {
+      localStorage.removeItem(FACILITY_BUILDER_CACHE_KEY);
+    } catch (error) {
+      console.warn('Failed to clear facility builder cache:', error);
+    }
+  };
+
   // Update refs when state changes
   useEffect(() => {
     selectedEquipmentRef.current = selectedEquipment;
@@ -85,7 +157,13 @@ const SimpleFacilityBuilder: React.FC = () => {
     try {
       const { data, error } = await supabase
         .from('sites')
-        .select('*')
+        .select(`
+          *,
+          pilot_programs (
+            program_id,
+            name
+          )
+        `)
         .order('name');
       
       if (error) throw error;
@@ -107,6 +185,11 @@ const SimpleFacilityBuilder: React.FC = () => {
   }, [selectedSiteId]);
 
   const loadFacilityData = async (siteId: string) => {
+    // Try to load from cache first
+    if (loadFromCache(siteId)) {
+      return; // Successfully loaded from cache
+    }
+    
     try {
       const { data: siteData, error } = await supabase
         .from('sites')
@@ -217,20 +300,24 @@ const SimpleFacilityBuilder: React.FC = () => {
         });
       }
 
-      // Get dimensions - prefer facility_dimensions, then use length/width fields
+      // Get dimensions - prefer actual length/width fields over facility_dimensions
+      // facility_dimensions JSON field might contain outdated data
       let dimensions;
-      if (siteData.facility_dimensions) {
-        dimensions = siteData.facility_dimensions;
-      } else if (siteData.length && siteData.width) {
+      
+      if (siteData.length && siteData.width) {
         // Note: database uses length for x-axis (width) and width for y-axis (height)
         dimensions = {
           width: siteData.length,
           height: siteData.width,
           units: 'feet'
         };
+      } else if (siteData.facility_dimensions && siteData.facility_dimensions.width && siteData.facility_dimensions.height) {
+        // Use facility_dimensions only if length/width not available
+        dimensions = siteData.facility_dimensions;
       } else {
+        // Default dimensions
         dimensions = {
-          width: 110,
+          width: 100,
           height: 100,
           units: 'feet'
         };
@@ -272,6 +359,9 @@ const SimpleFacilityBuilder: React.FC = () => {
         setHistory(newHistory.slice(-50));
         setHistoryIndex(49);
       }
+      
+      // Mark as having unsaved changes
+      setHasUnsavedChanges(true);
     }
     
     setFacilityData({
@@ -279,6 +369,27 @@ const SimpleFacilityBuilder: React.FC = () => {
       equipment
     });
   };
+  
+  // Save to cache whenever facility data or history changes
+  useEffect(() => {
+    if (facilityData && selectedSiteId) {
+      saveToCache();
+    }
+  }, [facilityData, history, historyIndex]);
+  
+  // Warn user about unsaved changes
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (hasUnsavedChanges) {
+        e.preventDefault();
+        e.returnValue = 'You have unsaved changes. Are you sure you want to leave?';
+        return e.returnValue;
+      }
+    };
+    
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [hasUnsavedChanges]);
 
   const handleUndo = () => {
     if (historyIndex > 0) {
@@ -305,6 +416,29 @@ const SimpleFacilityBuilder: React.FC = () => {
       setHistoryIndex(historyIndex + 1);
       showToast('Redo');
       isApplyingHistory.current = false;
+    }
+  };
+
+  const handleReset = async () => {
+    if (!selectedSiteId) return;
+    
+    const confirmReset = window.confirm('Are you sure you want to discard all unsaved changes and reload from the database?');
+    if (!confirmReset) return;
+    
+    try {
+      // Clear cache
+      clearCache();
+      
+      // Reset unsaved changes flag
+      setHasUnsavedChanges(false);
+      
+      // Reload facility data from database
+      await loadFacilityData(selectedSiteId);
+      
+      showToast('Reset to saved version');
+    } catch (error) {
+      console.error('Error resetting facility:', error);
+      showToast('Error resetting facility');
     }
   };
 
@@ -378,6 +512,9 @@ const SimpleFacilityBuilder: React.FC = () => {
 
       if (error) throw error;
 
+      // Clear cache after successful save
+      clearCache();
+      setHasUnsavedChanges(false);
       alert('Facility layout saved successfully!');
     } catch (err) {
       console.error('Error saving layout:', err);
@@ -470,12 +607,54 @@ const SimpleFacilityBuilder: React.FC = () => {
       defaultConfig = {
         plant_type: 'Other Fresh Perishable',
         surrounding_water_schedule: 'Daily',
-        fungicide_used: 'No'
+        fungicide_used: 'No',
+        placement: '',
+        placement_dynamics: '',
+        notes: ''
       };
     } else if (selectedTool === 'gasifier') {
       // Use site's default effectiveness radius
       defaultConfig = {
         effectiveness_radius: Math.sqrt((facilityData.facility_info.min_efficacious_gasifier_density_sqft_per_bag || 2000) / Math.PI)
+      };
+    } else if (selectedTool === 'fan') {
+      // Default fan configuration
+      defaultConfig = {
+        magnitude_cfm: 1000,
+        direction: 0, // Default pointing right
+        percentage_of_time_blowing: 100
+      };
+    } else if (selectedTool === 'shelving') {
+      // Make shelving proportional to facility size
+      const facilityWidth = facilityData.facility_info.dimensions.width;
+      const facilityHeight = facilityData.facility_info.dimensions.height;
+      
+      // Default to 20% of facility width, 10% of facility height
+      // But with reasonable min/max values
+      const shelvingWidth = Math.min(40, Math.max(8, facilityWidth * 0.2));
+      const shelvingHeight = Math.min(20, Math.max(4, facilityHeight * 0.1));
+      
+      console.log('[SHELVING DEFAULT CONFIG]', {
+        facilityDimensions: { width: facilityWidth, height: facilityHeight },
+        calculatedDimensions: {
+          width: facilityWidth * 0.2,
+          height: facilityHeight * 0.1
+        },
+        clampedDimensions: {
+          width: shelvingWidth,
+          height: shelvingHeight
+        },
+        finalDimensions: {
+          width: Math.round(shelvingWidth),
+          height: Math.round(shelvingHeight)
+        }
+      });
+      
+      defaultConfig = {
+        width: Math.round(shelvingWidth),
+        height: Math.round(shelvingHeight),
+        material: 'wire',
+        labelPosition: 'bottom'
       };
     }
 
@@ -638,12 +817,28 @@ const SimpleFacilityBuilder: React.FC = () => {
           break;
         case 'duplicate':
           if (facilityData) {
+            // Check if equipment would be out of bounds
+            const newX = contextMenu.equipment.x + 10;
+            const newY = contextMenu.equipment.y + 10;
+            const facilityWidth = facilityData.facility_info.dimensions.width;
+            const facilityHeight = facilityData.facility_info.dimensions.height;
+            
+            // For shelving, check if it fits
+            if (contextMenu.equipment.type === 'shelving' && contextMenu.equipment.config) {
+              const shelvingWidth = contextMenu.equipment.config.width || 40;
+              const shelvingHeight = contextMenu.equipment.config.height || 20;
+              if (newX + shelvingWidth/2 > facilityWidth || newY + shelvingHeight/2 > facilityHeight) {
+                showToast('Equipment would be out of bounds', 'error');
+                break;
+              }
+            }
+            
             const newEquipment: Equipment = {
               ...contextMenu.equipment,
               equipment_id: `${contextMenu.equipment.type}-${Date.now()}`,
               label: `${contextMenu.equipment.label} (Copy)`,
-              x: contextMenu.equipment.x + 10,
-              y: contextMenu.equipment.y + 10
+              x: newX,
+              y: newY
             };
             handleEquipmentUpdate([...facilityData.equipment, newEquipment]);
           }
@@ -658,24 +853,52 @@ const SimpleFacilityBuilder: React.FC = () => {
           break;
         case 'bring-to-front':
           if (facilityData) {
-            const targetEquipment = contextMenu.equipment;
-            const otherEquipment = facilityData.equipment.filter(
-              eq => eq.equipment_id !== targetEquipment.equipment_id
-            );
-            // Move the target equipment to the end of the array (rendered last = on top)
-            handleEquipmentUpdate([...otherEquipment, targetEquipment]);
-            showToast(`Brought ${targetEquipment.label} to front`);
+            // Check if we have multiple items selected
+            if (selectedEquipmentIds.length > 1) {
+              // Handle multiple items
+              const selectedItems = facilityData.equipment.filter(
+                eq => selectedEquipmentIds.includes(eq.equipment_id)
+              );
+              const otherEquipment = facilityData.equipment.filter(
+                eq => !selectedEquipmentIds.includes(eq.equipment_id)
+              );
+              // Move all selected items to the end (preserving their relative order)
+              handleEquipmentUpdate([...otherEquipment, ...selectedItems]);
+              showToast(`Brought ${selectedItems.length} items to front`);
+            } else {
+              // Single item
+              const targetEquipment = contextMenu.equipment;
+              const otherEquipment = facilityData.equipment.filter(
+                eq => eq.equipment_id !== targetEquipment.equipment_id
+              );
+              handleEquipmentUpdate([...otherEquipment, targetEquipment]);
+              showToast(`Brought ${targetEquipment.label} to front`);
+            }
           }
           break;
         case 'send-to-back':
           if (facilityData) {
-            const targetEquipment = contextMenu.equipment;
-            const otherEquipment = facilityData.equipment.filter(
-              eq => eq.equipment_id !== targetEquipment.equipment_id
-            );
-            // Move the target equipment to the beginning of the array (rendered first = on bottom)
-            handleEquipmentUpdate([targetEquipment, ...otherEquipment]);
-            showToast(`Sent ${targetEquipment.label} to back`);
+            // Check if we have multiple items selected
+            if (selectedEquipmentIds.length > 1) {
+              // Handle multiple items
+              const selectedItems = facilityData.equipment.filter(
+                eq => selectedEquipmentIds.includes(eq.equipment_id)
+              );
+              const otherEquipment = facilityData.equipment.filter(
+                eq => !selectedEquipmentIds.includes(eq.equipment_id)
+              );
+              // Move all selected items to the beginning (preserving their relative order)
+              handleEquipmentUpdate([...selectedItems, ...otherEquipment]);
+              showToast(`Sent ${selectedItems.length} items to back`);
+            } else {
+              // Single item
+              const targetEquipment = contextMenu.equipment;
+              const otherEquipment = facilityData.equipment.filter(
+                eq => eq.equipment_id !== targetEquipment.equipment_id
+              );
+              handleEquipmentUpdate([targetEquipment, ...otherEquipment]);
+              showToast(`Sent ${targetEquipment.label} to back`);
+            }
           }
           break;
       }
@@ -803,9 +1026,81 @@ const SimpleFacilityBuilder: React.FC = () => {
           const currentRotation = selectedEquipmentRef.current.config?.rotation || 0;
           const nextRotation = (currentRotation + 90) % 360;
           
+          const equipment = selectedEquipmentRef.current;
+          const width = equipment.config?.width || 40;
+          const height = equipment.config?.height || 20;
+          const facilityWidth = facilityDataRef.current.facility_info.dimensions.width;
+          const facilityHeight = facilityDataRef.current.facility_info.dimensions.height;
+          
+          // Calculate new bounding box after rotation
+          const angleRad = (nextRotation * Math.PI) / 180;
+          const absCos = Math.abs(Math.cos(angleRad));
+          const absSin = Math.abs(Math.sin(angleRad));
+          const newBoundingHalfWidth = (width / 2) * absCos + (height / 2) * absSin;
+          const newBoundingHalfHeight = (width / 2) * absSin + (height / 2) * absCos;
+          
+          // Check if rotation would cause equipment to go out of bounds
+          let newX = equipment.x;
+          let newY = equipment.y;
+          
+          // Adjust position if needed to keep equipment in bounds after rotation
+          if (newX - newBoundingHalfWidth < 0) {
+            newX = newBoundingHalfWidth;
+          } else if (newX + newBoundingHalfWidth > facilityWidth) {
+            newX = facilityWidth - newBoundingHalfWidth;
+          }
+          
+          if (newY - newBoundingHalfHeight < 0) {
+            newY = newBoundingHalfHeight;
+          } else if (newY + newBoundingHalfHeight > facilityHeight) {
+            newY = facilityHeight - newBoundingHalfHeight;
+          }
+          
+          console.log('[SHELVING ROTATION] Rotating shelving:', {
+            equipment: equipment.equipment_id,
+            position: { x: equipment.x, y: equipment.y },
+            dimensions: { 
+              stored: { width, height },
+              visual: {
+                at0deg: { width, height },
+                at90deg: { width: height, height: width },
+                at180deg: { width, height },
+                at270deg: { width: height, height: width }
+              },
+              currentVisual: {
+                width: currentRotation === 90 || currentRotation === 270 ? height : width,
+                height: currentRotation === 90 || currentRotation === 270 ? width : height
+              },
+              nextVisual: {
+                width: nextRotation === 90 || nextRotation === 270 ? height : width,
+                height: nextRotation === 90 || nextRotation === 270 ? width : height
+              }
+            },
+            rotation: { current: currentRotation, next: nextRotation },
+            boundingBox: {
+              before: {
+                halfWidth: (width / 2) * Math.abs(Math.cos(currentRotation * Math.PI / 180)) + (height / 2) * Math.abs(Math.sin(currentRotation * Math.PI / 180)),
+                halfHeight: (width / 2) * Math.abs(Math.sin(currentRotation * Math.PI / 180)) + (height / 2) * Math.abs(Math.cos(currentRotation * Math.PI / 180))
+              },
+              after: {
+                halfWidth: newBoundingHalfWidth,
+                halfHeight: newBoundingHalfHeight
+              }
+            },
+            positionAdjustment: {
+              needed: newX !== equipment.x || newY !== equipment.y,
+              newPos: { x: newX, y: newY }
+            },
+            ISSUE_CHECK: {
+              storedDimensionsNeverChange: true,
+              visualDimensionsShouldSwapAt90_270: true,
+              currentIssue: "Width/height are stored but visual representation should swap"
+            }
+          });
+          
           const updatedEquipment = facilityDataRef.current.equipment.map(eq =>
             eq.equipment_id === selectedEquipmentRef.current!.equipment_id
-              ? { ...eq, config: { ...eq.config, rotation: nextRotation } }
+              ? { ...eq, x: newX, y: newY, config: { ...eq.config, rotation: nextRotation } }
               : eq
           );
           handleEquipmentUpdate(updatedEquipment);
@@ -816,16 +1111,30 @@ const SimpleFacilityBuilder: React.FC = () => {
       // Shift+Cmd+Up - Bring to front
       if (e.shiftKey && e.metaKey && e.key === 'ArrowUp') {
         e.preventDefault();
-        if (selectedEquipmentRef.current && facilityDataRef.current) {
-          const targetEquipment = facilityDataRef.current.equipment.find(
-            eq => eq.equipment_id === selectedEquipmentRef.current!.equipment_id
-          );
-          if (targetEquipment) {
-            const otherEquipment = facilityDataRef.current.equipment.filter(
-              eq => eq.equipment_id !== targetEquipment.equipment_id
+        if (facilityDataRef.current) {
+          // Check if we have multiple items selected
+          if (selectedEquipmentIdsRef.current.length > 1) {
+            // Handle multiple items
+            const selectedItems = facilityDataRef.current.equipment.filter(
+              eq => selectedEquipmentIdsRef.current.includes(eq.equipment_id)
             );
-            handleEquipmentUpdate([...otherEquipment, targetEquipment]);
-            showToast(`Brought ${targetEquipment.label} to front`);
+            const otherEquipment = facilityDataRef.current.equipment.filter(
+              eq => !selectedEquipmentIdsRef.current.includes(eq.equipment_id)
+            );
+            handleEquipmentUpdate([...otherEquipment, ...selectedItems]);
+            showToast(`Brought ${selectedItems.length} items to front`);
+          } else if (selectedEquipmentRef.current) {
+            // Single item
+            const targetEquipment = facilityDataRef.current.equipment.find(
+              eq => eq.equipment_id === selectedEquipmentRef.current!.equipment_id
+            );
+            if (targetEquipment) {
+              const otherEquipment = facilityDataRef.current.equipment.filter(
+                eq => eq.equipment_id !== targetEquipment.equipment_id
+              );
+              handleEquipmentUpdate([...otherEquipment, targetEquipment]);
+              showToast(`Brought ${targetEquipment.label} to front`);
+            }
           }
         }
       }
@@ -833,16 +1142,30 @@ const SimpleFacilityBuilder: React.FC = () => {
       // Shift+Cmd+Down - Send to back
       if (e.shiftKey && e.metaKey && e.key === 'ArrowDown') {
         e.preventDefault();
-        if (selectedEquipmentRef.current && facilityDataRef.current) {
-          const targetEquipment = facilityDataRef.current.equipment.find(
-            eq => eq.equipment_id === selectedEquipmentRef.current!.equipment_id
-          );
-          if (targetEquipment) {
-            const otherEquipment = facilityDataRef.current.equipment.filter(
-              eq => eq.equipment_id !== targetEquipment.equipment_id
+        if (facilityDataRef.current) {
+          // Check if we have multiple items selected
+          if (selectedEquipmentIdsRef.current.length > 1) {
+            // Handle multiple items
+            const selectedItems = facilityDataRef.current.equipment.filter(
+              eq => selectedEquipmentIdsRef.current.includes(eq.equipment_id)
             );
-            handleEquipmentUpdate([targetEquipment, ...otherEquipment]);
-            showToast(`Sent ${targetEquipment.label} to back`);
+            const otherEquipment = facilityDataRef.current.equipment.filter(
+              eq => !selectedEquipmentIdsRef.current.includes(eq.equipment_id)
+            );
+            handleEquipmentUpdate([...selectedItems, ...otherEquipment]);
+            showToast(`Sent ${selectedItems.length} items to back`);
+          } else if (selectedEquipmentRef.current) {
+            // Single item
+            const targetEquipment = facilityDataRef.current.equipment.find(
+              eq => eq.equipment_id === selectedEquipmentRef.current!.equipment_id
+            );
+            if (targetEquipment) {
+              const otherEquipment = facilityDataRef.current.equipment.filter(
+                eq => eq.equipment_id !== targetEquipment.equipment_id
+              );
+              handleEquipmentUpdate([targetEquipment, ...otherEquipment]);
+              showToast(`Sent ${targetEquipment.label} to back`);
+            }
           }
         }
       }
@@ -858,6 +1181,13 @@ const SimpleFacilityBuilder: React.FC = () => {
         // Also clear any modals
         setShowElementSettings(false);
         setContextMenu(null);
+      }
+      
+      // D key - toggle debug boundaries
+      if ((e.key === 'd' || e.key === 'D') && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        setShowDebugBoundaries(prev => !prev);
+        showToast(showDebugBoundaries ? 'Debug boundaries hidden' : 'Debug boundaries shown');
       }
     };
     
@@ -917,8 +1247,49 @@ const SimpleFacilityBuilder: React.FC = () => {
   const handleSaveEquipment = () => {
     if (!editingEquipment || !facilityData) return;
 
+    // Validate shelving dimensions
+    if (editingEquipment.type === 'shelving' && editingEquipment.config) {
+      const shelvingWidth = editingEquipment.config.width || 40;
+      const shelvingHeight = editingEquipment.config.height || 20;
+      const facilityWidth = facilityData.facility_info.dimensions.width;
+      const facilityHeight = facilityData.facility_info.dimensions.height;
+      
+      // Check if shelving is larger than facility
+      if (shelvingWidth > facilityWidth * 0.8) {
+        showToast(`Shelving width (${shelvingWidth}ft) is too large for this facility (${facilityWidth}ft wide)`, 'error');
+        return;
+      }
+      if (shelvingHeight > facilityHeight * 0.8) {
+        showToast(`Shelving height (${shelvingHeight}ft) is too large for this facility (${facilityHeight}ft deep)`, 'error');
+        return;
+      }
+      
+      // Check if shelving would be out of bounds at current position
+      if (editingEquipment.x + shelvingWidth/2 > facilityWidth || 
+          editingEquipment.x - shelvingWidth/2 < 0) {
+        showToast('Shelving would extend beyond facility boundaries', 'error');
+        return;
+      }
+      if (editingEquipment.y + shelvingHeight/2 > facilityHeight || 
+          editingEquipment.y - shelvingHeight/2 < 0) {
+        showToast('Shelving would extend beyond facility boundaries', 'error');
+        return;
+      }
+    }
+
+    // For petri dishes, if this is a new equipment and label has changed, update the equipment_id
+    let equipmentToSave = editingEquipment;
+    if (isNewEquipment && editingEquipment.type === 'petri_dish' && 
+        editingEquipment.label && !editingEquipment.label.startsWith('New ')) {
+      // Update the equipment_id to match the label
+      equipmentToSave = {
+        ...editingEquipment,
+        equipment_id: editingEquipment.label
+      };
+    }
+
     const updatedEquipment = facilityData.equipment.map(eq => 
-      eq.equipment_id === editingEquipment.equipment_id ? editingEquipment : eq
+      eq.equipment_id === editingEquipment.equipment_id ? equipmentToSave : eq
     );
     
     handleEquipmentUpdate(updatedEquipment);
@@ -960,7 +1331,7 @@ const SimpleFacilityBuilder: React.FC = () => {
               <option value="">Select a site...</option>
               {sites.map(site => (
                 <option key={site.site_id} value={site.site_id}>
-                  {site.name} ({site.length}x{site.width} ft)
+                  {site.name} {site.pilot_programs?.name ? `- ${site.pilot_programs.name}` : ''} ({site.length}x{site.width} ft)
                 </option>
               ))}
             </select>
@@ -968,10 +1339,23 @@ const SimpleFacilityBuilder: React.FC = () => {
             <button
               onClick={handleSaveLayout}
               disabled={isSaving}
-              className="px-6 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
+              className={`px-6 py-2 ${hasUnsavedChanges ? 'bg-orange-600 hover:bg-orange-700' : 'bg-green-600 hover:bg-green-700'} text-white rounded-md disabled:opacity-50 relative`}
             >
-              {isSaving ? 'Saving...' : '💾 Save Layout'}
+              {hasUnsavedChanges && (
+                <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full animate-pulse"></span>
+              )}
+              {isSaving ? 'Saving...' : hasUnsavedChanges ? '💾 Save Layout (Unsaved Changes)' : '💾 Save Layout'}
             </button>
+            
+            {hasUnsavedChanges && (
+              <button
+                onClick={handleReset}
+                className="px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600"
+                title="Discard changes and reload from database"
+              >
+                🔄 Reset
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -996,6 +1380,7 @@ const SimpleFacilityBuilder: React.FC = () => {
               cursorPosition={cursorPosition}
               width={900}
               height={500}
+              showDebugBoundaries={showDebugBoundaries}
               compact={true}
             />
           ) : (
@@ -1276,9 +1661,9 @@ const SimpleFacilityBuilder: React.FC = () => {
                               ...editingEquipment,
                               config: { ...editingEquipment.config, width: parseFloat(e.target.value) || 40 }
                             })}
-                            min="10"
-                            max="100"
-                            step="5"
+                            min="4"
+                            max={facilityData ? Math.floor(facilityData.facility_info.dimensions.width * 0.8) : 100}
+                            step="1"
                             className="w-full px-3 py-2 border border-gray-300 rounded-md"
                           />
                         </div>
@@ -1292,9 +1677,9 @@ const SimpleFacilityBuilder: React.FC = () => {
                               ...editingEquipment,
                               config: { ...editingEquipment.config, height: parseFloat(e.target.value) || 20 }
                             })}
-                            min="5"
-                            max="50"
-                            step="5"
+                            min="2"
+                            max={facilityData ? Math.floor(facilityData.facility_info.dimensions.height * 0.8) : 50}
+                            step="1"
                             className="w-full px-3 py-2 border border-gray-300 rounded-md"
                           />
                         </div>
@@ -1369,10 +1754,21 @@ const SimpleFacilityBuilder: React.FC = () => {
                             <button
                               key={angle}
                               type="button"
-                              onClick={() => setEditingEquipment({
-                                ...editingEquipment,
-                                config: { ...editingEquipment.config, rotation: angle }
-                              })}
+                              onClick={() => {
+                                console.log('[SHELVING ROTATION] Modal rotation button clicked:', {
+                                  equipment: editingEquipment.equipment_id,
+                                  position: { x: editingEquipment.x, y: editingEquipment.y },
+                                  dimensions: { 
+                                    width: editingEquipment.config?.width || 40,
+                                    height: editingEquipment.config?.height || 20
+                                  },
+                                  rotation: { current: editingEquipment.config?.rotation || 0, next: angle }
+                                });
+                                setEditingEquipment({
+                                  ...editingEquipment,
+                                  config: { ...editingEquipment.config, rotation: angle }
+                                });
+                              }}
                               className={`flex-1 py-2 px-3 rounded-md border transition-colors ${
                                 (editingEquipment.config?.rotation || 0) === angle
                                   ? 'bg-blue-500 text-white border-blue-600'
@@ -1415,7 +1811,25 @@ const SimpleFacilityBuilder: React.FC = () => {
                         </select>
                       </div>
                       
-                      {/* Plant Type - Hidden, auto-selected to 'Other Fresh Perishable' */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Placement Dynamics:</label>
+                        <select
+                          value={editingEquipment.config.placement_dynamics || ''}
+                          onChange={(e) => setEditingEquipment({
+                            ...editingEquipment,
+                            config: { ...editingEquipment.config, placement_dynamics: e.target.value }
+                          })}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                        >
+                          <option value="">Select...</option>
+                          <option value="Near Door">Near Door</option>
+                          <option value="Near Port">Near Port</option>
+                          <option value="Near Airflow In">Near Airflow In</option>
+                          <option value="Near Airflow Out">Near Airflow Out</option>
+                          <option value="Corner">Corner</option>
+                          <option value="Central">Central</option>
+                        </select>
+                      </div>
                       
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Fungicide Used:</label>
@@ -1434,40 +1848,129 @@ const SimpleFacilityBuilder: React.FC = () => {
                       </div>
                       
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Placement Dynamics:</label>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Water Schedule:</label>
                         <select
-                          value={editingEquipment.config.placement_dynamics || ''}
+                          value={editingEquipment.config.surrounding_water_schedule || 'Daily'}
                           onChange={(e) => setEditingEquipment({
                             ...editingEquipment,
-                            config: { ...editingEquipment.config, placement_dynamics: e.target.value }
+                            config: { ...editingEquipment.config, surrounding_water_schedule: e.target.value }
                           })}
                           className="w-full px-3 py-2 border border-gray-300 rounded-md"
                         >
-                          <option value="">Select...</option>
-                          <option value="Near Door">Near Door</option>
-                          <option value="Near Airflow In">Near Airflow In</option>
-                          <option value="Near Airflow Out">Near Airflow Out</option>
-                          <option value="Isolated">Isolated</option>
+                          <option value="Daily">Daily</option>
+                          <option value="Twice Daily">Twice Daily</option>
+                          <option value="Every Other Day">Every Other Day</option>
+                          <option value="Every Third Day">Every Third Day</option>
+                          <option value="Weekly">Weekly</option>
                         </select>
                       </div>
                       
-                      {/* Water Schedule - Hidden, auto-selected to 'Daily' */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Plant Type:</label>
+                        <select
+                          value={editingEquipment.config.plant_type || 'Other Fresh Perishable'}
+                          onChange={(e) => setEditingEquipment({
+                            ...editingEquipment,
+                            config: { ...editingEquipment.config, plant_type: e.target.value }
+                          })}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                        >
+                          <option value="Other Fresh Perishable">Other Fresh Perishable</option>
+                          <option value="Ornamental Annual">Ornamental Annual</option>
+                          <option value="Leafy Greens">Leafy Greens</option>
+                          <option value="Herbs">Herbs</option>
+                          <option value="Berries">Berries</option>
+                        </select>
+                      </div>
+                      
+                      <div className="col-span-2">
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Notes:</label>
+                        <textarea
+                          value={editingEquipment.config.notes || ''}
+                          onChange={(e) => setEditingEquipment({
+                            ...editingEquipment,
+                            config: { ...editingEquipment.config, notes: e.target.value }
+                          })}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                          rows={2}
+                          placeholder="Additional notes..."
+                        />
+                      </div>
                     </div>
                   </div>
                 )}
 
-                {editingEquipment.type === 'fan' && editingEquipment.config && (
+                {editingEquipment.type === 'fan' && (
                   <div className="border-t pt-4">
-                    <h4 className="text-sm font-semibold mb-2">Fan Properties</h4>
-                    {editingEquipment.config.magnitude_cfm && (
-                      <p className="text-sm"><span className="font-medium">CFM:</span> {editingEquipment.config.magnitude_cfm}</p>
-                    )}
-                    {editingEquipment.config.percentage_of_time_blowing && (
-                      <p className="text-sm"><span className="font-medium">Active %:</span> {editingEquipment.config.percentage_of_time_blowing}%</p>
-                    )}
-                    {editingEquipment.config.directionality?.terminal_point && (
-                      <p className="text-sm"><span className="font-medium">Direction to:</span> ({editingEquipment.config.directionality.terminal_point.x}, {editingEquipment.config.directionality.terminal_point.y})</p>
-                    )}
+                    <h4 className="text-sm font-semibold mb-3">Fan Properties</h4>
+                    <div className="space-y-3">
+                      {/* CFM Input */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Airflow (CFM):
+                        </label>
+                        <input
+                          type="number"
+                          value={editingEquipment.config?.magnitude_cfm || 1000}
+                          onChange={(e) => setEditingEquipment({
+                            ...editingEquipment,
+                            config: { 
+                              ...editingEquipment.config, 
+                              magnitude_cfm: parseInt(e.target.value) || 1000 
+                            }
+                          })}
+                          min="100"
+                          max="10000"
+                          step="100"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                        />
+                      </div>
+                      
+                      {/* Direction Input */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Airflow Direction (degrees):
+                        </label>
+                        <input
+                          type="number"
+                          value={editingEquipment.config?.direction || 0}
+                          onChange={(e) => setEditingEquipment({
+                            ...editingEquipment,
+                            config: { 
+                              ...editingEquipment.config, 
+                              direction: parseInt(e.target.value) % 360 
+                            }
+                          })}
+                          min="0"
+                          max="359"
+                          step="45"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">0° = Right, 90° = Down, 180° = Left, 270° = Up</p>
+                      </div>
+                      
+                      {/* Active Percentage */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Active Time (%):
+                        </label>
+                        <input
+                          type="number"
+                          value={editingEquipment.config?.percentage_of_time_blowing || 100}
+                          onChange={(e) => setEditingEquipment({
+                            ...editingEquipment,
+                            config: { 
+                              ...editingEquipment.config, 
+                              percentage_of_time_blowing: Math.min(100, Math.max(0, parseInt(e.target.value) || 100))
+                            }
+                          })}
+                          min="0"
+                          max="100"
+                          step="10"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                        />
+                      </div>
+                    </div>
                   </div>
                 )}
 

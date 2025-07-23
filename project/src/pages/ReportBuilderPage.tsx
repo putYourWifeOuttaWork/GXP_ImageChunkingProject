@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { Plus, Save, Eye, Settings, Filter, BarChart3, ArrowLeft, AlertCircle, CheckCircle, RotateCcw, Zap } from 'lucide-react';
 import Button from '../components/common/Button';
@@ -13,9 +13,11 @@ import { VisualizationPanel } from '../components/reporting/builder/Visualizatio
 import { PreviewPanel } from '../components/reporting/builder/PreviewPanel';
 import { DatabaseConnectionTest } from '../components/reporting/builder/DatabaseConnectionTest';
 import { ConfigurationTrail } from '../components/reporting/builder/ConfigurationTrail';
+import { ChartSettingsPanel } from '../components/reporting/builder/ChartSettingsPanel';
 import SaveReportModal from '../components/reports/SaveReportModal';
 
 const ReportBuilderPage: React.FC = () => {
+  console.log('🏗️ ReportBuilderPage render');
   const { reportId: urlReportId } = useParams<{ reportId?: string }>();
   const [searchParams] = useSearchParams();
   const queryReportId = searchParams.get('edit');
@@ -47,6 +49,7 @@ const ReportBuilderPage: React.FC = () => {
     removeFilter,
     updateFilterGroups,
     setChartType,
+    updateVisualizationSettings,
     setActiveStep,
     setSelectedSegments,
     setIsolationFilters,
@@ -70,18 +73,17 @@ const ReportBuilderPage: React.FC = () => {
   const [previewData, setPreviewData] = useState<any>(null);
   const [editReportId, setEditReportId] = useState<string | null>(null);
   const [isSaveAs, setIsSaveAs] = useState(false);
+  const [reportLoaded, setReportLoaded] = useState(false);
 
-  // Load existing report data or reset for new report
+  // Load existing report data
   useEffect(() => {
-    if (!reportId) {
-      // Creating a new report - reset state to clear any cached data
-      resetState();
-    } else if (existingReport && !loadingReport) {
-      // Editing existing report - load the data
+    if (reportId && existingReport && !loadingReport && !reportLoaded) {
+      // Editing existing report - load the data only once
       loadReport(existingReport);
       setEditReportId(reportId);
+      setReportLoaded(true);
     }
-  }, [existingReport, loadingReport, loadReport, reportId, resetState]);
+  }, [existingReport, loadingReport, loadReport, reportId, reportLoaded]);
 
   // Handle save modal success
   const handleSaveSuccess = (savedReportId: string) => {
@@ -242,8 +244,39 @@ const ReportBuilderPage: React.FC = () => {
     },
   ];
 
+  // Create a stable report config that only includes what PreviewPanel needs
+  const reportConfigForPreview = useMemo(() => ({
+    name: state.name,
+    description: state.description,
+    category: state.category,
+    type: state.type,
+    chartType: state.chartType,
+    visualizationSettings: state.visualizationSettings,
+    dimensions: state.dimensions,
+    measures: state.measures,
+    filters: state.filters,
+    dataSources: state.dataSources,
+    selectedSegments: state.selectedSegments,
+    segmentBy: state.selectedSegments, // Both for compatibility
+    isolationFilters: state.isolationFilters,
+  }), [
+    state.name,
+    state.description,
+    state.category,
+    state.type,
+    state.chartType,
+    state.visualizationSettings,
+    state.dimensions,
+    state.measures,
+    state.filters,
+    state.dataSources,
+    state.selectedSegments,
+    state.isolationFilters,
+  ]);
+
   // Render step content
   const renderStepContent = () => {
+    console.log('🎨 renderStepContent called for step:', state.activeStep);
     switch (state.activeStep) {
       case 0:
         return (
@@ -315,7 +348,7 @@ const ReportBuilderPage: React.FC = () => {
             chartType={state.chartType}
             onChartTypeChange={setChartType}
             visualizationSettings={state.visualizationSettings}
-            onSettingsChange={() => {}}
+            onSettingsChange={updateVisualizationSettings}
             dimensions={state.dimensions}
             measures={state.measures}
           />
@@ -323,10 +356,11 @@ const ReportBuilderPage: React.FC = () => {
       case 6:
         return (
           <PreviewPanel
+            key="preview-panel" // Add key to prevent unmounting
             previewData={state.previewData}
             isLoading={isLoading}
             onGeneratePreview={handlePreview}
-            reportConfig={state}
+            reportConfig={reportConfigForPreview}
             onIsolationFiltersChange={setIsolationFilters}
           />
         );
@@ -443,12 +477,20 @@ const ReportBuilderPage: React.FC = () => {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
           {/* Configuration Trail */}
-          <div className="lg:col-span-1">
+          <div className="lg:col-span-1 space-y-4">
             <ConfigurationTrail
               state={state}
               currentStep={state.activeStep}
               onStepClick={setActiveStep}
             />
+            
+            {/* Chart Settings - Only show on Preview step */}
+            {state.activeStep === 6 && (
+              <ChartSettingsPanel
+                visualizationSettings={state.visualizationSettings}
+                onSettingsChange={updateVisualizationSettings}
+              />
+            )}
           </div>
 
           {/* Main Content */}

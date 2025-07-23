@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, memo } from 'react';
 import { Eye, RefreshCw, Download, Share, AlertCircle, CheckCircle, BarChart } from 'lucide-react';
 import Button from '../../common/Button';
 import { AggregatedData } from '../../../types/reporting';
@@ -26,6 +26,68 @@ interface PreviewPanelProps {
   onIsolationFiltersChange?: (filters: IsolationState) => void;
 }
 
+// Memoized chart component to prevent unnecessary re-renders
+const ChartRenderer = memo(({ 
+  chartType, 
+  data, 
+  settings, 
+  onDataSelect,
+  dimensions 
+}: { 
+  chartType: string; 
+  data: AggregatedData | null;
+  settings: any;
+  onDataSelect: (data: any[], position: { x: number; y: number }, title: string) => void;
+  dimensions?: any[];
+}) => {
+  if (!data) return null;
+
+  const chartProps = {
+    data,
+    settings,
+    className: "border border-gray-200 rounded-lg",
+    onDataSelect,
+    dimensions
+  };
+
+  switch (chartType) {
+    case 'bar':
+      return <D3BarChart {...chartProps} />;
+    case 'line':
+      return <D3LineChart {...chartProps} />;
+    case 'pie':
+      return <D3PieChart {...chartProps} />;
+    case 'area':
+      return <D3AreaChart {...chartProps} />;
+    case 'scatter':
+      return <ScatterPlot {...chartProps} />;
+    case 'box_plot':
+      return <BoxPlot {...chartProps} />;
+    case 'histogram':
+      return <Histogram {...chartProps} />;
+    case 'treemap':
+      return <TreeMap {...chartProps} />;
+    case 'heatmap':
+      return <HeatmapChart {...chartProps} />;
+    case 'growth_progression':
+      return <GrowthProgressionChart {...chartProps} />;
+    case 'spatial_effectiveness':
+      return <SpatialEffectivenessMap {...chartProps} />;
+    case 'table':
+      return <TableVisualization {...chartProps} />;
+    default:
+      return <D3BarChart {...chartProps} />;
+  }
+}, (prevProps, nextProps) => {
+  // Custom comparison to prevent re-renders when only visualization settings change
+  // that don't affect the data display
+  return (
+    prevProps.chartType === nextProps.chartType &&
+    prevProps.data === nextProps.data &&
+    JSON.stringify(prevProps.settings) === JSON.stringify(nextProps.settings)
+  );
+});
+
 export const PreviewPanel: React.FC<PreviewPanelProps> = ({
   previewData,
   isLoading,
@@ -33,10 +95,12 @@ export const PreviewPanel: React.FC<PreviewPanelProps> = ({
   reportConfig,
   onIsolationFiltersChange,
 }) => {
-  // Initialize isolation state from reportConfig if available
-  const [isolationState, setIsolationState] = useState<IsolationState>(
-    reportConfig.isolationFilters || {}
-  );
+  console.log('🔄 PreviewPanel render - isolation filters:', reportConfig.isolationFilters);
+  console.log('🔄 PreviewPanel render - preview data exists:', !!previewData);
+  
+  // Use isolation state from reportConfig to ensure it persists across re-renders
+  const isolationState = reportConfig.isolationFilters || {};
+  
   const [showDataViewer, setShowDataViewer] = useState(false);
   const [selectedData, setSelectedData] = useState<any[]>([]);
   const [dataViewerTitle, setDataViewerTitle] = useState('');
@@ -202,41 +266,15 @@ export const PreviewPanel: React.FC<PreviewPanelProps> = ({
       );
     }
 
-    const chartProps = {
-      data: filteredData,
-      settings: reportConfig.visualizationSettings,
-      className: "border border-gray-200 rounded-lg",
-      onDataSelect: openDataViewer // Add brush callback to all charts
-    };
-
-    switch (reportConfig.chartType) {
-      case 'bar':
-        return <D3BarChart {...chartProps} />;
-      case 'line':
-        return <D3LineChart {...chartProps} />;
-      case 'pie':
-        return <D3PieChart {...chartProps} />;
-      case 'area':
-        return <D3AreaChart {...chartProps} />;
-      case 'scatter':
-        return <ScatterPlot {...chartProps} />;
-      case 'box_plot':
-        return <BoxPlot {...chartProps} />;
-      case 'histogram':
-        return <Histogram {...chartProps} />;
-      case 'treemap':
-        return <TreeMap {...chartProps} />;
-      case 'heatmap':
-        return <HeatmapChart {...chartProps} />;
-      case 'growth_progression':
-        return <GrowthProgressionChart {...chartProps} />;
-      case 'spatial_effectiveness':
-        return <SpatialEffectivenessMap {...chartProps} />;
-      case 'table':
-        return <TableVisualization {...chartProps} />;
-      default:
-        return <D3BarChart {...chartProps} />;
-    }
+    return (
+      <ChartRenderer
+        chartType={reportConfig.chartType}
+        data={filteredData}
+        settings={reportConfig.visualizationSettings}
+        onDataSelect={openDataViewer}
+        dimensions={reportConfig.dimensions}
+      />
+    );
   };
 
   const renderPreviewContent = () => {
@@ -263,6 +301,12 @@ export const PreviewPanel: React.FC<PreviewPanelProps> = ({
           console.log('Isolation filter - segments found:', segments);
           console.log('Isolation filter - available dimensions:', Object.keys(previewData.data[0]?.dimensions || {}));
           
+          // Debug first data row to check segmentMetadata
+          if (previewData.data.length > 0) {
+            console.log('First data row segmentMetadata:', previewData.data[0].segmentMetadata);
+            console.log('First data row keys:', Object.keys(previewData.data[0]));
+          }
+          
           if (segments.length > 0) {
             return (
               <div className="mb-4">
@@ -271,8 +315,7 @@ export const PreviewPanel: React.FC<PreviewPanelProps> = ({
                   segmentBy={segments}
                   initialState={isolationState}
                   onIsolationChange={(filters) => {
-                    setIsolationState(filters);
-                    // Notify parent component if callback provided
+                    // Directly notify parent component to update state
                     if (onIsolationFiltersChange) {
                       onIsolationFiltersChange(filters);
                     }
@@ -375,47 +418,47 @@ export const PreviewPanel: React.FC<PreviewPanelProps> = ({
 
         {/* Chart Preview Area */}
         <div className="bg-white border border-gray-200 rounded-lg p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h4 className="text-lg font-medium text-gray-900">Chart Preview</h4>
-            <div className="flex space-x-2">
-              <Button
-                variant="outline"
-                size="sm"
-                icon={<RefreshCw size={16} />}
-                onClick={onGeneratePreview}
-                disabled={isLoading}
-              >
-                Refresh
-              </Button>
-              <SecureExportMenu
-                data={filteredData?.data || []}
-                columns={[
-                  ...reportConfig.dimensions.map((dim: any) => ({
-                    field: `dimensions.${dim.field}`,
-                    label: dim.displayName || dim.name,
-                    type: dim.dataType || 'string'
-                  })),
-                  ...reportConfig.measures.map((measure: any) => ({
-                    field: `measures.${measure.field}`,
-                    label: measure.displayName || measure.name,
-                    type: 'number'
-                  }))
-                ]}
-                reportName={reportConfig.name || 'report'}
-              />
-              <Button
-                variant="outline"
-                size="sm"
-                icon={<Share size={16} />}
-                disabled={!previewData}
-              >
-                Share
-              </Button>
+            <div className="flex items-center justify-between mb-4">
+              <h4 className="text-lg font-medium text-gray-900">{reportConfig.name || 'Chart Preview'}</h4>
+              <div className="flex space-x-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  icon={<RefreshCw size={16} />}
+                  onClick={onGeneratePreview}
+                  disabled={isLoading}
+                >
+                  Refresh
+                </Button>
+                <SecureExportMenu
+                  data={filteredData?.data || []}
+                  columns={[
+                    ...reportConfig.dimensions.map((dim: any) => ({
+                      field: `dimensions.${dim.field}`,
+                      label: dim.displayName || dim.name,
+                      type: dim.dataType || 'string'
+                    })),
+                    ...reportConfig.measures.map((measure: any) => ({
+                      field: `measures.${measure.field}`,
+                      label: measure.displayName || measure.name,
+                      type: 'number'
+                    }))
+                  ]}
+                  reportName={reportConfig.name || 'report'}
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  icon={<Share size={16} />}
+                  disabled={!previewData}
+                >
+                  Share
+                </Button>
+              </div>
             </div>
-          </div>
 
-          {/* D3 Chart Rendering */}
-          {renderChart()}
+            {/* D3 Chart Rendering */}
+            {renderChart()}
         </div>
 
         {/* Data Sample */}

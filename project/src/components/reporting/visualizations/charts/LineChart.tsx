@@ -7,9 +7,10 @@ interface LineChartProps {
   settings: VisualizationSettings;
   className?: string;
   onDataSelect?: (data: any[], position: { x: number; y: number }, title: string) => void;
+  dimensions?: any[];
 }
 
-export const LineChart: React.FC<LineChartProps> = ({ data, settings, className, onDataSelect }) => {
+export const LineChart: React.FC<LineChartProps> = ({ data, settings, className, onDataSelect, dimensions }) => {
   return (
     <BaseChart
       data={data}
@@ -17,6 +18,7 @@ export const LineChart: React.FC<LineChartProps> = ({ data, settings, className,
       chartType="line"
       className={className}
       onDataSelect={onDataSelect}
+      dimensions={dimensions}
     />
   );
 };

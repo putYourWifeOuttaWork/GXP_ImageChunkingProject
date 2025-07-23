@@ -278,7 +278,12 @@ export const EnhancedFacilityFloorPlan: React.FC<EnhancedFacilityFloorPlanProps>
 
     // Draw each equipment
     facilityData.equipment.forEach(equipment => {
-      const style = equipmentStyles[equipment.type];
+      const style = equipmentStyles[equipment.type] || equipmentStyles.petri_dish; // Fallback to petri_dish style
+      if (!style) {
+        console.warn(`Unknown equipment type: ${equipment.type}`);
+        return; // Skip this equipment
+      }
+      
       const equipGroup = equipmentGroup.append('g')
         .attr('class', `equipment-${equipment.type}`)
         .attr('transform', `translate(${scaleX(equipment.x)}, ${scaleY(equipment.y)})`)

@@ -29,16 +29,21 @@ export const IsolationFilter: React.FC<IsolationFilterProps> = ({
   initialState,
   className = ''
 }) => {
-  const [isolation, setIsolation] = useState<IsolationState>(initialState || {});
+  console.log('🎯 IsolationFilter render - initialState:', initialState);
+  console.log('🎯 IsolationFilter render - segmentBy:', segmentBy);
+  
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
+  
+  // Use initialState directly instead of maintaining local state
+  const isolation = initialState || {};
 
   // Extract unique values for each segment
   const segmentOptions = useMemo(() => {
     const options: Record<string, SegmentOption[]> = {};
     
+    // Only log summary, not all data points
     console.log('IsolationFilter - data received:', {
       dataLength: data.data.length,
-      firstRow: data.data[0],
       segmentBy
     });
     
@@ -60,13 +65,14 @@ export const IsolationFilter: React.FC<IsolationFilterProps> = ({
                           row.segments?.segment_program_id ||
                           row.metadata?.program_id;
           
-          console.log('Program data for row:', {
-            programName,
-            programId,
-            pilot_programs: row.pilot_programs,
-            segmentMetadata: row.segmentMetadata,
-            row
-          });
+          // Debug logging for program name resolution
+          if (!programName && row.program_id) {
+            console.log('IsolationFilter: No program name found for program_id:', row.program_id, {
+              'row.pilot_programs': row.pilot_programs,
+              'row.segmentMetadata': row.segmentMetadata,
+              'row.metadata': row.metadata
+            });
+          }
           
           if (programName && programName !== 'Unknown' && programName.trim() !== '') {
             displayName = programName;
@@ -87,13 +93,17 @@ export const IsolationFilter: React.FC<IsolationFilterProps> = ({
                        row.segments?.segment_site_id ||
                        row.metadata?.site_id;
           
-          console.log('Processing site segment for row:', {
-            siteName,
-            siteId,
-            metadata: row.metadata,
-            dimensions: row.dimensions,
-            row
-          });
+          // Debug logging for site name resolution
+          if (!siteName && siteId && data.data.indexOf(row) < 3) {
+            console.log('IsolationFilter: No site name found for site_id:', siteId, {
+              'row.sites': row.sites,
+              'row.segmentMetadata': row.segmentMetadata,
+              'row.segmentMetadata.site_id_name': row.segmentMetadata?.site_id_name,
+              'row.metadata': row.metadata,
+              'full row keys': Object.keys(row),
+              'segmentMetadata keys': row.segmentMetadata ? Object.keys(row.segmentMetadata) : []
+            });
+          }
           
           if (siteName && siteName !== 'Unknown Site' && siteName.trim() !== '') {
             // Use the site name for display
@@ -198,14 +208,12 @@ export const IsolationFilter: React.FC<IsolationFilterProps> = ({
       [segment]: newValues.length > 0 ? newValues : undefined
     };
     
-    setIsolation(newIsolation);
     onIsolationChange(newIsolation);
   };
 
   const handleClearSegment = (segment: string) => {
     const newState = { ...isolation };
     delete newState[segment as keyof IsolationState];
-    setIsolation(newState);
     onIsolationChange(newState);
   };
 

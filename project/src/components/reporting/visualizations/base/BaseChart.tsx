@@ -27,6 +27,7 @@ interface BaseChartProps {
   className?: string;
   onSeriesToggle?: (seriesId: string, visible: boolean) => void;
   onDataSelect?: (data: any[], position: { x: number; y: number }, title: string) => void;
+  dimensions?: any[];
 }
 
 // Helper function to detect if a field contains date data
@@ -162,6 +163,20 @@ const COLOR_PALETTES = {
   // Darker palette specifically for line charts - better visibility
   darkened: ['#0d5aa7', '#cc5500', '#1a8f1a', '#b51a1a', '#6633a3', '#5c3420', '#c339a0', '#4d4d4d', '#999900', '#0099b3']
 };
+
+// Helper function to resolve color palette from settings
+function resolveColorPalette(palette: string | string[] | undefined, defaultPalette: string[] = COLOR_PALETTES.set3): string[] {
+  if (typeof palette === 'string') {
+    // If palette is a string, look it up in COLOR_PALETTES
+    return COLOR_PALETTES[palette as keyof typeof COLOR_PALETTES] || defaultPalette;
+  } else if (Array.isArray(palette)) {
+    // If palette is already an array, use it directly
+    return palette;
+  } else {
+    // Fallback to default
+    return defaultPalette;
+  }
+}
 
 // Generate series data from aggregated data
 function generateSeriesData(data: any[], colorPalette: string[] = COLOR_PALETTES.set3, metadata?: any): SeriesData[] {
@@ -345,12 +360,85 @@ function generateSeriesData(data: any[], colorPalette: string[] = COLOR_PALETTES
   }
 }
 
+// Define fixed ranges for known metrics
+const METRIC_FIXED_RANGES: Record<string, { min: number; max: number; label?: string }> = {
+  // Petri observations
+  'growth_index': { min: 0, max: 10.99, label: 'Growth Index (0-10.99)' },
+  'growth_progression': { min: 0, max: 100, label: 'Growth Progression' }, // Assuming percentage
+  'growth_aggression': { min: -1000, max: 100, label: 'Growth Aggression' },
+  
+  // Gasifier observations  
+  'measure': { min: 0, max: 10, label: 'Measure (0-10)' },
+  'linear_reduction_nominal': { min: 0, max: 6.0, label: 'Linear Reduction Nominal' },
+  'linear_reduction_per_day': { min: 0, max: 6.09, label: 'Linear Reduction Per Day' },
+  
+  // Site/submission metrics
+  'indoor_temperature': { min: 32, max: 120, label: 'Temperature (°F)' },
+  'temperature': { min: 32, max: 120, label: 'Temperature (°F)' },
+  'indoor_humidity': { min: 1, max: 100, label: 'Humidity (%)' },
+  'humidity': { min: 1, max: 100, label: 'Humidity (%)' },
+  'percentage_complete': { min: 0, max: 100, label: 'Percentage Complete' },
+  
+  // Location metrics
+  'latitude': { min: -90, max: 90, label: 'Latitude' },
+  'longitude': { min: -180, max: 180, label: 'Longitude' },
+  
+  // Common percentage fields (assuming 0-100 for standard percentages)
+  'growth_suppression_rate': { min: 0, max: 100, label: 'Growth Suppression Rate (%)' },
+  'treatment_efficiency': { min: 0, max: 100, label: 'Treatment Efficiency (%)' },
+  'effectiveness_percentage': { min: 0, max: 100, label: 'Effectiveness (%)' },
+  'reduction_percentage': { min: 0, max: 100, label: 'Reduction (%)' }
+};
+
 // Smart Y-axis scaling for multiple series
-function calculateYDomain(seriesData: SeriesData[], visibleOnly: boolean = true): [number, number] {
+function calculateYDomain(seriesData: SeriesData[], visibleOnly: boolean = true, measureName?: string, customMin?: number, customMax?: number): [number, number] {
   const visibleSeries = visibleOnly ? seriesData.filter(s => s.visible) : seriesData;
   
   if (visibleSeries.length === 0) return [0, 100];
   
+  // If we have a measure name, check for fixed range
+  if (measureName) {
+    const normalizedMetric = measureName.toLowerCase();
+    
+    // Check exact match first
+    if (METRIC_FIXED_RANGES[normalizedMetric]) {
+      return [METRIC_FIXED_RANGES[normalizedMetric].min, METRIC_FIXED_RANGES[normalizedMetric].max];
+    }
+    
+    // Check for partial matches
+    for (const [key, range] of Object.entries(METRIC_FIXED_RANGES)) {
+      if (normalizedMetric.includes(key) || 
+          (key.includes('percentage') && normalizedMetric.endsWith('_percentage')) ||
+          (key.includes('percentage') && normalizedMetric.endsWith('_percent')) ||
+          (key.includes('rate') && normalizedMetric.endsWith('_rate'))) {
+        return [range.min, range.max];
+      }
+    }
+  }
+  
+  // Check if all series have the same name (common case for single measure)
+  const uniqueNames = [...new Set(visibleSeries.map(s => s.name))];
+  if (uniqueNames.length === 1) {
+    const metricName = uniqueNames[0];
+    const normalizedMetric = metricName.toLowerCase();
+    
+    // Check exact match first
+    if (METRIC_FIXED_RANGES[normalizedMetric]) {
+      return [METRIC_FIXED_RANGES[normalizedMetric].min, METRIC_FIXED_RANGES[normalizedMetric].max];
+    }
+    
+    // Check for partial matches
+    for (const [key, range] of Object.entries(METRIC_FIXED_RANGES)) {
+      if (normalizedMetric.includes(key) || 
+          (key.includes('percentage') && normalizedMetric.endsWith('_percentage')) ||
+          (key.includes('percentage') && normalizedMetric.endsWith('_percent')) ||
+          (key.includes('rate') && normalizedMetric.endsWith('_rate'))) {
+        return [range.min, range.max];
+      }
+    }
+  }
+  
+  // Fall back to dynamic calculation
   const allValues = visibleSeries.flatMap(series => 
     series.data.map(d => d.value).filter(v => v != null && !isNaN(v))
   );
@@ -366,7 +454,11 @@ function calculateYDomain(seriesData: SeriesData[], visibleOnly: boolean = true)
   const minDomain = includeZero ? Math.min(0, min - padding) : min - padding;
   const maxDomain = max + padding;
   
-  return [minDomain, maxDomain];
+  // Apply custom min/max if provided
+  const finalMin = customMin !== undefined ? customMin : minDomain;
+  const finalMax = customMax !== undefined ? customMax : maxDomain;
+  
+  return [finalMin, finalMax];
 }
 
 export const BaseChart: React.FC<BaseChartProps> = ({
@@ -375,7 +467,8 @@ export const BaseChart: React.FC<BaseChartProps> = ({
   chartType,
   className = '',
   onSeriesToggle,
-  onDataSelect
+  onDataSelect,
+  dimensions: dimensionConfigs
 }) => {
   console.log('BaseChart rendering with margins fix v2 - right margin should be 180px');
   
@@ -396,8 +489,10 @@ export const BaseChart: React.FC<BaseChartProps> = ({
   
   // Zoom state - moved up before useEffect
   const [zoomLevel, setZoomLevel] = useState(1);
-  const [isPanning, setIsPanning] = useState(false);
   const [containerDimensions, setContainerDimensions] = useState({ width: 0, height: 0 });
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const [showNavigationHint, setShowNavigationHint] = useState(false);
+  const navigationHintTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
   // DataViewer state
   const [dataViewer, setDataViewer] = useState<{
@@ -411,6 +506,15 @@ export const BaseChart: React.FC<BaseChartProps> = ({
     position: { x: 0, y: 0 },
     title: ''
   });
+
+  // Cleanup navigation hint timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (navigationHintTimeoutRef.current) {
+        clearTimeout(navigationHintTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // Brush state
   const [brushSelection, setBrushSelection] = useState<[[number, number], [number, number]] | null>(null);
@@ -490,9 +594,20 @@ export const BaseChart: React.FC<BaseChartProps> = ({
       });
     }
 
-    // Use darker palette for line charts for better visibility
-    const colorPalette = chartType === 'line' ? COLOR_PALETTES.darkened : COLOR_PALETTES.set3;
-    const newSeriesData = generateSeriesData(filteredData, colorPalette, data.metadata);
+    // Apply aggregation based on measure configuration
+    const aggregatedData = aggregateData(filteredData, data.metadata);
+    
+    // Use the color palette from settings or default based on chart type
+    const defaultPalette = chartType === 'line' ? COLOR_PALETTES.darkened : COLOR_PALETTES.set3;
+    const colorPalette = resolveColorPalette(settings.colors?.palette, defaultPalette);
+    
+    console.log('Color palette debug:', {
+      settingsPalette: settings.colors?.palette,
+      resolvedPalette: colorPalette,
+      chartType
+    });
+    
+    const newSeriesData = generateSeriesData(aggregatedData, colorPalette, data.metadata);
     setSeriesData(newSeriesData);
     
     // Check if data contains both positive and negative values
@@ -567,7 +682,7 @@ export const BaseChart: React.FC<BaseChartProps> = ({
     onSeriesToggle?.(seriesId, !seriesData.find(s => s.id === seriesId)?.visible);
   }, [seriesData, onSeriesToggle]);
 
-  function renderHeatmap(g: any, data: any[], width: number, height: number, settings: VisualizationSettings, callbacks?: any, metadata?: any, svg?: any) {
+  function renderHeatmap(g: any, data: any[], width: number, height: number, settings: VisualizationSettings, callbacks?: any, metadata?: any, svg?: any, dimensionConfigs?: any[]) {
     if (!data.length) return;
 
     // For heatmap, we need at least 2 dimensions and 1 measure
@@ -593,10 +708,85 @@ export const BaseChart: React.FC<BaseChartProps> = ({
         measureDisplayName = measureMeta.displayName;
       }
     }
+    
+    // Get dimension display names
+    let xDimDisplayName = xDim;
+    let yDimDisplayName = yDim;
+    
+    // Try to get display names from dimensionConfigs first, then metadata
+    if (dimensionConfigs) {
+      const xConfig = dimensionConfigs.find(d => d.field === xDim || d.name === xDim);
+      const yConfig = dimensionConfigs.find(d => d.field === yDim || d.name === yDim);
+      if (xConfig?.displayName) xDimDisplayName = xConfig.displayName;
+      if (yConfig?.displayName) yDimDisplayName = yConfig.displayName;
+    } else if (metadata?.dimensions) {
+      const xMeta = metadata.dimensions.find((d: any) => d.field === xDim || d.name === xDim);
+      const yMeta = metadata.dimensions.find((d: any) => d.field === yDim || d.name === yDim);
+      if (xMeta?.displayName) xDimDisplayName = xMeta.displayName;
+      if (yMeta?.displayName) yDimDisplayName = yMeta.displayName;
+    }
 
     // Get unique values for each dimension
     let xValues = [...new Set(data.map(d => d.dimensions[xDim]))];
     let yValues = [...new Set(data.map(d => d.dimensions[yDim]))];
+    
+    // Apply sorting based on settings
+    const xSort = settings?.axes?.x?.sort || 'none';
+    const ySort = settings?.axes?.y?.sort || 'none';
+    
+    // Helper function to sort values
+    const sortValues = (values: any[], dimension: string, sortType: string) => {
+      if (sortType === 'none') return values;
+      
+      // Check if values are dates
+      const isDate = values.every(v => {
+        const parsed = new Date(v);
+        return !isNaN(parsed.getTime()) && v.toString().includes('-');
+      });
+      
+      if (sortType === 'asc') {
+        if (isDate) {
+          return values.sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+        }
+        return values.sort((a, b) => {
+          if (typeof a === 'string' && typeof b === 'string') {
+            return a.localeCompare(b);
+          }
+          return a - b;
+        });
+      } else if (sortType === 'desc') {
+        if (isDate) {
+          return values.sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
+        }
+        return values.sort((a, b) => {
+          if (typeof a === 'string' && typeof b === 'string') {
+            return b.localeCompare(a);
+          }
+          return b - a;
+        });
+      } else if (sortType === 'value_asc' || sortType === 'value_desc') {
+        // Sort by aggregated measure values
+        const valueMap = new Map();
+        values.forEach(val => {
+          const sum = data
+            .filter(d => d.dimensions[dimension] === val)
+            .reduce((acc, d) => acc + (+d.measures[measure] || 0), 0);
+          valueMap.set(val, sum);
+        });
+        
+        return values.sort((a, b) => {
+          const valA = valueMap.get(a) || 0;
+          const valB = valueMap.get(b) || 0;
+          return sortType === 'value_asc' ? valA - valB : valB - valA;
+        });
+      }
+      
+      return values;
+    };
+    
+    // Apply sorting
+    xValues = sortValues(xValues, xDim, xSort);
+    yValues = sortValues(yValues, yDim, ySort);
     
     // Calculate dynamic margins based on content
     const longestYLabel = Math.max(...yValues.map(v => String(v).length)) * 7; // Approximate char width
@@ -638,19 +828,25 @@ export const BaseChart: React.FC<BaseChartProps> = ({
     const colorScale = d3.scaleSequential()
       .domain(extent)
       .interpolator((t) => {
-        // Viridis-inspired colorblind-safe gradient
-        if (t < 0.25) {
+        // Enhanced gradient with orange-red at the top
+        if (t < 0.2) {
           // Dark blue to blue
-          return d3.interpolateRgb("#440154", "#31688e")(t * 4);
-        } else if (t < 0.5) {
+          return d3.interpolateRgb("#440154", "#31688e")(t * 5);
+        } else if (t < 0.4) {
           // Blue to teal
-          return d3.interpolateRgb("#31688e", "#21908c")((t - 0.25) * 4);
-        } else if (t < 0.75) {
+          return d3.interpolateRgb("#31688e", "#21908c")((t - 0.2) * 5);
+        } else if (t < 0.6) {
           // Teal to green
-          return d3.interpolateRgb("#21908c", "#5dc863")((t - 0.5) * 4);
-        } else {
+          return d3.interpolateRgb("#21908c", "#5dc863")((t - 0.4) * 5);
+        } else if (t < 0.8) {
           // Green to yellow
-          return d3.interpolateRgb("#5dc863", "#fde725")((t - 0.75) * 4);
+          return d3.interpolateRgb("#5dc863", "#fde725")((t - 0.6) * 5);
+        } else if (t < 0.9) {
+          // Yellow to orange
+          return d3.interpolateRgb("#fde725", "#ff7f00")((t - 0.8) * 10);
+        } else {
+          // Orange to red
+          return d3.interpolateRgb("#ff7f00", "#d62728")((t - 0.9) * 10);
         }
       });
 
@@ -722,7 +918,25 @@ export const BaseChart: React.FC<BaseChartProps> = ({
         }
         
         // Format Y-axis labels for better readability
-        const text = String(d);
+        const rawValue = String(d);
+        
+        // Create a map of raw values to display names for Y dimension
+        const yValueDisplayMap = new Map();
+        if (dimensionConfigs || metadata?.dimensions) {
+          // Find the Y dimension config
+          const yConfig = dimensionConfigs?.find(dc => dc.field === yDim || dc.name === yDim) ||
+                         metadata?.dimensions?.find((dm: any) => dm.field === yDim || dm.name === yDim);
+          
+          // If we have options with display names, create the mapping
+          if (yConfig?.options) {
+            yConfig.options.forEach((opt: any) => {
+              yValueDisplayMap.set(opt.value, opt.label || opt.displayName || opt.value);
+            });
+          }
+        }
+        
+        // Use display name if available
+        const text = yValueDisplayMap.get(rawValue) || rawValue;
         
         // Check if this is a date/timestamp
         if (isDateField(text)) {
@@ -765,7 +979,27 @@ export const BaseChart: React.FC<BaseChartProps> = ({
     // Add tooltips to Y-axis labels showing full values
     yAxis.selectAll('text')
       .append('title')
-      .text((d: any) => String(d));
+      .text((d: any) => {
+        const rawValue = String(d);
+        
+        // Create a map of raw values to display names for Y dimension
+        const yValueDisplayMap = new Map();
+        if (dimensionConfigs || metadata?.dimensions) {
+          // Find the Y dimension config
+          const yConfig = dimensionConfigs?.find(dc => dc.field === yDim || dc.name === yDim) ||
+                         metadata?.dimensions?.find((dm: any) => dm.field === yDim || dm.name === yDim);
+          
+          // If we have options with display names, create the mapping
+          if (yConfig?.options) {
+            yConfig.options.forEach((opt: any) => {
+              yValueDisplayMap.set(opt.value, opt.label || opt.displayName || opt.value);
+            });
+          }
+        }
+        
+        // Use display name if available
+        return yValueDisplayMap.get(rawValue) || rawValue;
+      });
 
     // Add grid lines for better readability
     heatmapG.selectAll('.grid-line-x')
@@ -1591,7 +1825,7 @@ export const BaseChart: React.FC<BaseChartProps> = ({
       .attr('width', (d: any) => Math.max(0, xScale(d.x1) - xScale(d.x0) - 1))
       .attr('y', (d: any) => yScale(d.length))
       .attr('height', (d: any) => height - yScale(d.length))
-      .attr('fill', COLOR_PALETTES.set3[0]) // Use first soft color
+      .attr('fill', resolveColorPalette(settings.colors?.palette)[0]) // Use first color from palette
       .attr('fill-opacity', 0.7)
       .attr('stroke', '#2980b9')
       .attr('stroke-width', 1);
@@ -2100,13 +2334,25 @@ export const BaseChart: React.FC<BaseChartProps> = ({
     
     const measure = measureKeys[0]; // Use first measure for sizing
 
-    // Get unique time values
-    let timeValues = [...new Set(data.map(d => d.dimensions[timeDim]))];
+    // Get unique time values - aggregate by date if dealing with datetime
+    let timeValues: string[] = [];
+    const isTimeDate = timeDim && data.length > 0 && isDateField(data[0].dimensions[timeDim]);
     
-    // Sort time values if they are dates
-    const isTimeDate = timeValues.length > 0 && isDateField(timeValues[0]);
     if (isTimeDate) {
-      timeValues = timeValues.sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+      // For date/time dimensions, extract just the date part (YYYY-MM-DD)
+      const uniqueDates = new Set<string>();
+      data.forEach(d => {
+        const dateValue = d.dimensions[timeDim];
+        if (dateValue) {
+          // Extract just the date part (YYYY-MM-DD)
+          const dateOnly = new Date(dateValue).toISOString().split('T')[0];
+          uniqueDates.add(dateOnly);
+        }
+      });
+      timeValues = Array.from(uniqueDates).sort();
+    } else {
+      // For non-date dimensions, use values as-is
+      timeValues = [...new Set(data.map(d => d.dimensions[timeDim]))];
     }
 
     // Create time control container
@@ -2130,7 +2376,23 @@ export const BaseChart: React.FC<BaseChartProps> = ({
     // Build hierarchical data for a specific time
     function buildHierarchy(timeValue: any) {
       // Filter data for current time
-      const timeData = timeDim ? data.filter(d => d.dimensions[timeDim] === timeValue) : data;
+      let timeData: any[];
+      
+      if (timeDim && isTimeDate) {
+        // For date dimensions, filter by matching date part only
+        timeData = data.filter(d => {
+          const dateValue = d.dimensions[timeDim];
+          if (!dateValue) return false;
+          const dateOnly = new Date(dateValue).toISOString().split('T')[0];
+          return dateOnly === timeValue;
+        });
+      } else if (timeDim) {
+        // For non-date dimensions, exact match
+        timeData = data.filter(d => d.dimensions[timeDim] === timeValue);
+      } else {
+        // No time dimension
+        timeData = data;
+      }
       
       // Build nested structure
       const root: any = {
@@ -2143,7 +2405,19 @@ export const BaseChart: React.FC<BaseChartProps> = ({
         if (dim === 'segment_program_name') {
           return (d: any) => d.metadata?.segment_program_name || 'Unknown Program';
         } else {
-          return (d: any) => d.dimensions[dim] || 'Unknown';
+          // Check if this dimension is a date field
+          const isDateDim = data.length > 0 && isDateField(data[0].dimensions[dim]);
+          if (isDateDim) {
+            // For date dimensions, group by date only (not datetime)
+            return (d: any) => {
+              const dateValue = d.dimensions[dim];
+              if (!dateValue) return 'Unknown';
+              // Extract just the date part (YYYY-MM-DD)
+              return new Date(dateValue).toISOString().split('T')[0];
+            };
+          } else {
+            return (d: any) => d.dimensions[dim] || 'Unknown';
+          }
         }
       });
 
@@ -2218,7 +2492,7 @@ export const BaseChart: React.FC<BaseChartProps> = ({
     
     const colorScale = d3.scaleOrdinal()
       .domain(programNames)
-      .range(d3.schemeSet3.slice(0, Math.max(programNames.length, 3))); // Use Set3 for better distinction
+      .range(resolveColorPalette(settings.colors?.palette).slice(0, Math.max(programNames.length, 3))); // Use palette from settings
     
     // Function to get color for a node based on its top-level program
     function getNodeColor(d: any): string {
@@ -2356,6 +2630,11 @@ export const BaseChart: React.FC<BaseChartProps> = ({
             }
           }
           
+          // Check if displayName is a date (YYYY-MM-DD format) and format it nicely
+          if (displayName && displayName.match(/^\d{4}-\d{2}-\d{2}$/)) {
+            displayName = formatDateForDisplay(new Date(displayName), false, false);
+          }
+          
           // Truncate long names to fit
           const maxLength = Math.floor(cellWidth / 8); // Approximate character width
           if (displayName.length > maxLength) {
@@ -2409,7 +2688,14 @@ export const BaseChart: React.FC<BaseChartProps> = ({
           
           // Show tooltip with hierarchy information
           if (callbacks?.onPointClick) {
-            const path = d.ancestors().reverse().slice(1).map((n: any) => n.data.name);
+            const path = d.ancestors().reverse().slice(1).map((n: any) => {
+              const name = n.data.name;
+              // Format dates in path
+              if (name && name.match(/^\d{4}-\d{2}-\d{2}$/)) {
+                return formatDateForDisplay(new Date(name), false, false);
+              }
+              return name;
+            });
             const tooltipData = [{
               label: 'Path',
               value: path.join(' → '),
@@ -2454,14 +2740,48 @@ export const BaseChart: React.FC<BaseChartProps> = ({
           .on('click', function(event: any, d: any) {
             if (callbacks.onPointClick) {
               const path = d.ancestors().reverse().slice(1).map((n: any) => n.data.name);
-              const leafData = data.filter(item => 
-                hierarchyDims.every((dim, i) => item.dimensions[dim] === path[i]) &&
-                item.dimensions[timeDim] === timeValue
-              );
+              const leafData = data.filter(item => {
+                // Check each hierarchy dimension
+                const hierarchyMatch = hierarchyDims.every((dim, i) => {
+                  const itemValue = dim === 'segment_program_name' 
+                    ? item.metadata?.segment_program_name 
+                    : item.dimensions[dim];
+                  
+                  // For date dimensions, compare date part only
+                  const isDateDim = itemValue && isDateField(itemValue);
+                  if (isDateDim) {
+                    const itemDate = new Date(itemValue).toISOString().split('T')[0];
+                    return itemDate === path[i];
+                  }
+                  
+                  return itemValue === path[i];
+                });
+                
+                // Check time dimension match
+                const timeMatch = !timeDim || !timeValue || (() => {
+                  const itemTimeValue = item.dimensions[timeDim];
+                  if (isTimeDate && itemTimeValue) {
+                    const itemDate = new Date(itemTimeValue).toISOString().split('T')[0];
+                    return itemDate === timeValue;
+                  }
+                  return itemTimeValue === timeValue;
+                })();
+                
+                return hierarchyMatch && timeMatch;
+              });
               
               const rect = this.getBoundingClientRect();
+              const formattedPath = path.map(p => {
+                if (p && p.match(/^\d{4}-\d{2}-\d{2}$/)) {
+                  return formatDateForDisplay(new Date(p), false, false);
+                }
+                return p;
+              });
+              const formattedTime = isTimeDate && timeValue 
+                ? formatDateForDisplay(new Date(timeValue), false, false) 
+                : timeValue;
               callbacks.onPointClick(leafData, { x: rect.left, y: rect.top }, 
-                `${path.join(' > ')} at ${timeValue}`);
+                `${formattedPath.join(' > ')} at ${formattedTime}`);
             }
           });
       }
@@ -2527,7 +2847,7 @@ export const BaseChart: React.FC<BaseChartProps> = ({
       .attr('y', 20)
       .style('font-size', '14px')
       .style('font-weight', 'bold')
-      .text(timeValues[0]);
+      .text(isTimeDate && timeValues[0] ? formatDateForDisplay(new Date(timeValues[0]), false, false) : timeValues[0]);
 
     // Play/pause functionality
     playButton.on('click', function() {
@@ -2677,24 +2997,24 @@ export const BaseChart: React.FC<BaseChartProps> = ({
     switch (chartType) {
       case 'line':
         // Pass dimension metadata to help determine x-axis
-        const dimensionConfig = data.metadata?.dimensions?.[0]; // First dimension is x-axis
+        const dimensionConfig = dimensionConfigs?.[0] || data.metadata?.dimensions?.[0]; // First dimension is x-axis
         renderMultiSeriesLineChart(g, seriesData, width, height, settings, chartCallbacks, dimensionConfig);
         break;
       case 'bar':
-        renderBarChart(g, data.data, width, height, settings, chartCallbacks, showZeroValues, setShowZeroValues, data.metadata);
+        renderBarChart(g, data.data, width, height, settings, chartCallbacks, showZeroValues, setShowZeroValues, data.metadata, dimensionConfigs);
         break;
       case 'area':
         // Use multi-series approach for area charts too
-        renderMultiSeriesAreaChart(g, seriesData, width, height, settings, chartCallbacks, data.metadata?.dimensions?.[0]);
+        renderMultiSeriesAreaChart(g, seriesData, width, height, settings, chartCallbacks, dimensionConfigs?.[0] || data.metadata?.dimensions?.[0]);
         break;
       case 'pie':
-        renderPieChart(g, data.data, width, height, settings);
+        renderPieChart(g, data.data, width, height, settings, data.metadata);
         break;
       case 'scatter':
-        renderScatterPlot(g, data.data, width, height, settings, chartCallbacks);
+        renderScatterPlot(g, data.data, width, height, settings, chartCallbacks, data.metadata);
         break;
       case 'heatmap':
-        renderHeatmap(g, data.data, width, height, settings, chartCallbacks, data.metadata, svg);
+        renderHeatmap(g, data.data, width, height, settings, chartCallbacks, data.metadata, svg, dimensionConfigs);
         break;
       case 'box_plot':
         renderBoxPlot(g, data.data, width, height, settings, chartCallbacks);
@@ -2709,7 +3029,7 @@ export const BaseChart: React.FC<BaseChartProps> = ({
         renderSpatialEffectivenessMap(g, data.data, width, height, settings, chartCallbacks);
         break;
       default:
-        renderMultiSeriesLineChart(g, seriesData, width, height, settings, chartCallbacks);
+        renderMultiSeriesLineChart(g, seriesData, width, height, settings, chartCallbacks, dimensionConfigs?.[0] || data.metadata?.dimensions?.[0]);
     }
 
     // Add legend if enabled and we have multiple series (but not for treemaps/heatmaps which have their own legend)
@@ -2717,15 +3037,42 @@ export const BaseChart: React.FC<BaseChartProps> = ({
       const legendPosition = settings.legends?.position || 'top';
       let legendX, legendY;
       
-      if (legendPosition === 'top') {
-        legendX = margin.left + width / 2;
-        legendY = margin.top - 10; // Position legend in the allocated top margin space
-      } else if (legendPosition === 'bottom') {
-        legendX = margin.left + width / 2;
-        legendY = margin.top + height + 30;
-      } else {
-        legendX = width + margin.left + 10;
-        legendY = margin.top;
+      switch (legendPosition) {
+        case 'top':
+          legendX = margin.left + width / 2;
+          legendY = margin.top - 10;
+          break;
+        case 'bottom':
+          legendX = margin.left + width / 2;
+          legendY = margin.top + height + 30;
+          break;
+        case 'left':
+          legendX = margin.left - 10;
+          legendY = margin.top + height / 2;
+          break;
+        case 'right':
+          legendX = width + margin.left + 10;
+          legendY = margin.top;
+          break;
+        case 'topLeft':
+          legendX = margin.left;
+          legendY = margin.top - 10;
+          break;
+        case 'topRight':
+          legendX = margin.left + width - 100; // Adjust based on legend width
+          legendY = margin.top - 10;
+          break;
+        case 'bottomLeft':
+          legendX = margin.left;
+          legendY = margin.top + height + 30;
+          break;
+        case 'bottomRight':
+          legendX = margin.left + width - 100; // Adjust based on legend width
+          legendY = margin.top + height + 30;
+          break;
+        default:
+          legendX = width + margin.left + 10;
+          legendY = margin.top;
       }
       
       renderLegend(svg, legendItems, legendX, legendY, handleSeriesToggle, legendPosition);
@@ -2764,9 +3111,34 @@ export const BaseChart: React.FC<BaseChartProps> = ({
         border: '1px solid #e5e7eb',
         padding: '16px',
         position: 'relative',
-        overflow: 'visible'
+        overflow: 'hidden' // Container should not overflow
       }}
     >
+      {/* Help text when chart is scrollable - shows as tooltip on hover */}
+      {(zoomLevel > 1 || dimensions.width > 800 || svgHeight > 500) && (
+        <div
+          style={{
+            position: 'absolute',
+            bottom: '10px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            backgroundColor: 'rgba(0, 0, 0, 0.9)',
+            color: 'white',
+            padding: '8px 16px',
+            borderRadius: '6px',
+            fontSize: '13px',
+            zIndex: 10,
+            pointerEvents: 'none',
+            boxShadow: '0 2px 8px rgba(0, 0, 0, 0.3)',
+            opacity: showNavigationHint ? 1 : 0,
+            transition: 'opacity 0.2s ease-in-out',
+            visibility: showNavigationHint ? 'visible' : 'hidden'
+          }}
+        >
+          Use scrollbars to navigate • Zoom in/out with controls • Drag to select data
+        </div>
+      )}
+      
       {/* Zoom controls for all charts */}
       {(
         <div 
@@ -2842,42 +3214,26 @@ export const BaseChart: React.FC<BaseChartProps> = ({
         </div>
       )}
       <div 
+        ref={scrollContainerRef}
+        onMouseEnter={() => {
+          // Show tooltip after a short delay
+          navigationHintTimeoutRef.current = setTimeout(() => {
+            setShowNavigationHint(true);
+          }, 500); // 500ms delay
+        }}
+        onMouseLeave={() => {
+          // Clear timeout and hide tooltip immediately
+          if (navigationHintTimeoutRef.current) {
+            clearTimeout(navigationHintTimeoutRef.current);
+          }
+          setShowNavigationHint(false);
+        }}
         style={{
           width: '100%',
-          height: svgHeight + 40, // Add space for scrollbars
-          maxHeight: '80vh', // Limit height to 80% of viewport for better UX
-          // Smart overflow handling - scroll when needed, even at 1:1 zoom
-          overflow: (() => {
-            const chartWidth = dimensions.width * zoomLevel;
-            const chartHeight = svgHeight * zoomLevel;
-            const availableWidth = containerDimensions.width || dimensions.width;
-            const availableHeight = containerDimensions.height || (svgHeight + 40);
-            
-            // Check if content overflows available space
-            const widthOverflow = chartWidth > availableWidth;
-            const heightOverflow = chartHeight > availableHeight;
-            
-            // Show scrollbars if:
-            // 1. Chart is zoomed beyond 1:1
-            // 2. Chart content is larger than available container space
-            // 3. Chart has many data points that extend beyond margins
-            // 4. Heatmap charts (which have titles above margins)
-            if (zoomLevel > 1 || widthOverflow || heightOverflow) {
-              return 'auto';
-            }
-            
-            // For charts with lots of data points, always allow scrolling
-            if (data?.data?.length > 50) {
-              return 'auto';
-            }
-            
-            // For heatmaps and charts with titles above margins, enable scrolling
-            if (chartType === 'heatmap') {
-              return 'auto';
-            }
-            
-            return 'visible'; // Changed from 'hidden' to 'visible' to prevent clipping
-          })(),
+          height: 'auto',
+          maxHeight: '600px', // Fixed max height for consistent experience
+          // Always use auto to show scrollbars when content overflows
+          overflow: 'auto',
           position: 'relative',
           border: (() => {
             const chartWidth = dimensions.width * zoomLevel;
@@ -2901,7 +3257,9 @@ export const BaseChart: React.FC<BaseChartProps> = ({
           style={{
             width: dimensions.width * zoomLevel,
             height: svgHeight * zoomLevel,
-            position: 'relative'
+            position: 'relative',
+            minWidth: dimensions.width, // Ensure minimum width
+            minHeight: svgHeight // Ensure minimum height
           }}
         >
           <svg
@@ -2942,6 +3300,107 @@ export const BaseChart: React.FC<BaseChartProps> = ({
 };
 
 // Helper function to render empty state message
+// Helper function to aggregate data based on measure configuration
+function aggregateData(data: any[], metadata?: any): any[] {
+  if (!data.length) return data;
+  
+  // Get dimensions and measures from first data point
+  const dimensions = Object.keys(data[0].dimensions);
+  const measures = Object.keys(data[0].measures);
+  
+  // Create a map to track which measures need aggregation
+  const measureAggregations = new Map<string, string>();
+  
+  if (metadata?.measures) {
+    measures.forEach(measureKey => {
+      const measureMeta = metadata.measures.find((m: any) => 
+        measureKey.includes(m.field) || measureKey === m.name
+      );
+      if (measureMeta?.aggregation && measureMeta.aggregation !== 'none') {
+        measureAggregations.set(measureKey, measureMeta.aggregation);
+      }
+    });
+  }
+  
+  // If no measures need aggregation, return original data
+  if (measureAggregations.size === 0) {
+    return data;
+  }
+  
+  // Group data by all dimension values
+  const groupedData = new Map<string, any[]>();
+  
+  data.forEach(d => {
+    const key = dimensions.map(dim => d.dimensions[dim] || '').join('|||');
+    if (!groupedData.has(key)) {
+      groupedData.set(key, []);
+    }
+    groupedData.get(key)!.push(d);
+  });
+  
+  // Apply aggregation to each group
+  return Array.from(groupedData.entries()).map(([groupKey, groupRecords]) => {
+    const dimensionValues: any = {};
+    dimensions.forEach((dim, i) => {
+      dimensionValues[dim] = groupKey.split('|||')[i];
+    });
+    
+    const aggregatedMeasures: any = {};
+    
+    measures.forEach(measureKey => {
+      const aggregationType = measureAggregations.get(measureKey) || 'none';
+      const values = groupRecords.map(r => +r.measures[measureKey]).filter(v => !isNaN(v));
+      
+      if (aggregationType === 'none' || values.length === 0) {
+        // For 'none' aggregation or no valid values, use first value
+        aggregatedMeasures[measureKey] = groupRecords[0].measures[measureKey];
+      } else {
+        switch (aggregationType) {
+          case 'sum':
+            aggregatedMeasures[measureKey] = values.reduce((a, b) => a + b, 0);
+            break;
+          case 'avg':
+            aggregatedMeasures[measureKey] = values.reduce((a, b) => a + b, 0) / values.length;
+            break;
+          case 'count':
+            aggregatedMeasures[measureKey] = values.length;
+            break;
+          case 'min':
+            aggregatedMeasures[measureKey] = Math.min(...values);
+            break;
+          case 'max':
+            aggregatedMeasures[measureKey] = Math.max(...values);
+            break;
+          case 'median':
+            const sorted = values.sort((a, b) => a - b);
+            const mid = Math.floor(sorted.length / 2);
+            aggregatedMeasures[measureKey] = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+            break;
+          case 'distinct':
+            aggregatedMeasures[measureKey] = new Set(values).size;
+            break;
+          case 'first':
+            aggregatedMeasures[measureKey] = values[0] || 0;
+            break;
+          case 'last':
+            aggregatedMeasures[measureKey] = values[values.length - 1] || 0;
+            break;
+          default:
+            aggregatedMeasures[measureKey] = values[0] || 0;
+        }
+      }
+    });
+    
+    // Return aggregated data point with same structure
+    return {
+      dimensions: dimensionValues,
+      measures: aggregatedMeasures,
+      // Keep reference to original records for drill-down
+      _originalRecords: groupRecords
+    };
+  });
+}
+
 function renderEmptyState(g: any, width: number, height: number, title: string, subtitle?: string) {
   const messageGroup = g.append('g')
     .attr('transform', `translate(${width / 2}, ${height / 2})`);
@@ -3018,7 +3477,7 @@ function renderEmptyState(g: any, width: number, height: number, title: string, 
   }
 }
 
-function renderBarChart(g: any, data: any[], width: number, height: number, settings: VisualizationSettings, callbacks?: any, showZeroValues?: boolean, setShowZeroValues?: (value: boolean) => void, metadata?: any) {
+function renderBarChart(g: any, data: any[], width: number, height: number, settings: VisualizationSettings, callbacks?: any, showZeroValues?: boolean, setShowZeroValues?: (value: boolean) => void, metadata?: any, dimensionConfigs?: any[]) {
   if (!data.length) {
     renderEmptyState(g, width, height, 'No data available', 'Check your filters and data source configuration');
     return;
@@ -3040,9 +3499,12 @@ function renderBarChart(g: any, data: any[], width: number, height: number, sett
       measureDisplayName = measureMeta.displayName;
     }
   }
+
+  // Apply aggregation based on measure configuration
+  const processedData = aggregateData(data, metadata);
   
   // Create composite keys if we have multiple dimensions (including segments)
-  const allDimKeys = Object.keys(data[0].dimensions);
+  const allDimKeys = Object.keys(processedData[0].dimensions);
   const hasMultipleDimensions = allDimKeys.length > 1;
   
   // If we have multiple dimensions, render as grouped bar chart inline
@@ -3051,8 +3513,8 @@ function renderBarChart(g: any, data: any[], width: number, height: number, sett
     console.log('Rendering grouped bar chart for 2 dimensions:', allDimKeys);
     
     // Inline grouped bar chart implementation
-    const dimensionKeys = Object.keys(data[0].dimensions);
-    const firstMeasureKey = Object.keys(data[0].measures)[0];
+    const dimensionKeys = Object.keys(processedData[0].dimensions);
+    const firstMeasureKey = Object.keys(processedData[0].measures)[0];
     
     if (!dimensionKeys.length || !firstMeasureKey) {
       console.error('Missing dimensions or measures for grouped bar chart');
@@ -3064,7 +3526,7 @@ function renderBarChart(g: any, data: any[], width: number, height: number, sett
     const groupDimKeys = dimensionKeys.slice(1);
     
     // Get unique values for x-axis - clean up IDs and show human-readable names
-    const xValues = [...new Set(data.map(d => {
+    let xValues = [...new Set(processedData.map(d => {
       const value = d.dimensions[xDimKey];
       // For any field with "(ID: xxx)", extract just the name part
       if (value && value.includes('(ID:')) {
@@ -3072,6 +3534,64 @@ function renderBarChart(g: any, data: any[], width: number, height: number, sett
       }
       return value;
     }))].filter(v => v);
+    
+    // Apply sorting based on settings
+    const xSort = settings?.axes?.x?.sort || 'none';
+    if (xSort !== 'none') {
+      // Helper function to sort values
+      const sortXValues = () => {
+        // Check if values are dates
+        const isDate = xValues.every(v => {
+          const parsed = new Date(v);
+          return !isNaN(parsed.getTime()) && v.toString().includes('-');
+        });
+        
+        if (xSort === 'asc') {
+          if (isDate) {
+            return xValues.sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+          }
+          return xValues.sort((a, b) => {
+            if (typeof a === 'string' && typeof b === 'string') {
+              return a.localeCompare(b);
+            }
+            return a - b;
+          });
+        } else if (xSort === 'desc') {
+          if (isDate) {
+            return xValues.sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
+          }
+          return xValues.sort((a, b) => {
+            if (typeof a === 'string' && typeof b === 'string') {
+              return b.localeCompare(a);
+            }
+            return b - a;
+          });
+        } else if (xSort === 'value_asc' || xSort === 'value_desc') {
+          // Sort by aggregated measure values
+          const valueMap = new Map();
+          xValues.forEach(val => {
+            const sum = data
+              .filter(d => {
+                const dVal = d.dimensions[xDimKey];
+                const cleanDVal = dVal && dVal.includes('(ID:') ? dVal.split('(ID:')[0].trim() : dVal;
+                return cleanDVal === val;
+              })
+              .reduce((acc, d) => acc + (+d.measures[firstMeasureKey] || 0), 0);
+            valueMap.set(val, sum);
+          });
+          
+          return xValues.sort((a, b) => {
+            const valA = valueMap.get(a) || 0;
+            const valB = valueMap.get(b) || 0;
+            return xSort === 'value_asc' ? valA - valB : valB - valA;
+          });
+        }
+        
+        return xValues;
+      };
+      
+      xValues = sortXValues();
+    }
     
     console.log('X-axis values:', xValues);
     console.log('First data point dimensions:', data[0].dimensions);
@@ -3131,10 +3651,10 @@ function renderBarChart(g: any, data: any[], width: number, height: number, sett
       .domain(yDomain)
       .range([height, 0]);
 
-    // Create color scale
+    // Create color scale using settings palette
     const colorScale = d3.scaleOrdinal()
       .domain(groupValues)
-      .range(d3.schemeSet3);
+      .range(resolveColorPalette(settings.colors?.palette, COLOR_PALETTES.set3));
 
     // Add axes
     const xAxis = g.append('g')
@@ -3159,6 +3679,35 @@ function renderBarChart(g: any, data: any[], width: number, height: number, sett
 
     g.append('g')
       .call(d3.axisLeft(yScale));
+
+    // Add axis labels
+    // X-axis label
+    const xAxisLabel = dimensionConfigs?.[0]?.displayName || formatDimensionName(xDimKey);
+    g.append('text')
+      .attr('transform', `translate(${width / 2}, ${height + 50})`)
+      .style('text-anchor', 'middle')
+      .style('font-size', '12px')
+      .style('font-weight', 'bold')
+      .style('fill', '#333')
+      .text(xAxisLabel);
+
+    // Y-axis label - clean up measure name to show only unit
+    let cleanMeasureName = measureDisplayName || firstMeasureKey;
+    if (cleanMeasureName.includes(' - ')) {
+      cleanMeasureName = cleanMeasureName.split(' - ')[0].trim();
+    } else if (cleanMeasureName.includes(' (')) {
+      cleanMeasureName = cleanMeasureName.split(' (')[0].trim();
+    }
+    
+    g.append('text')
+      .attr('transform', 'rotate(-90)')
+      .attr('y', -40)
+      .attr('x', -(height / 2))
+      .style('text-anchor', 'middle')
+      .style('font-size', '12px')
+      .style('font-weight', 'bold')
+      .style('fill', '#333')
+      .text(cleanMeasureName);
 
     // Add zero line if data crosses zero
     if (yDomain[0] < 0 && yDomain[1] > 0) {
@@ -3391,12 +3940,14 @@ function renderBarChart(g: any, data: any[], width: number, height: number, sett
   console.log('Bar chart debug:', {
     hasMultipleDimensions,
     allDimKeys,
-    firstDataPoint: data[0],
-    sampleCompositeKey: getCompositeKey(data[0])
+    firstDataPoint: processedData[0],
+    sampleCompositeKey: getCompositeKey(processedData[0]),
+    originalDataLength: data.length,
+    processedDataLength: processedData.length
   });
 
   // Check if all values are zero
-  const allZero = data.every(d => +d.measures[firstMeasureKey] === 0);
+  const allZero = processedData.every(d => +d.measures[firstMeasureKey] === 0);
   if (allZero) {
     renderEmptyState(g, width, height, 'All values are zero', 'This may indicate no growth activity or missing data');
   }
@@ -3405,16 +3956,16 @@ function renderBarChart(g: any, data: any[], width: number, height: number, sett
   const adjustedHeight = height;
 
   // Detect if the dimension is a date for proper sorting
-  const isDateDimension = isDateField(data[0].dimensions[firstDimKey]);
+  const isDateDimension = isDateField(processedData[0].dimensions[firstDimKey]);
   
   // Filter out zero/null values to avoid sparse charts
-  let filteredData = data;
+  let filteredData = processedData;
   let hiddenCount = 0;
   
   // Filter based on showZeroValues setting
-  const originalCount = data.length;
+  const originalCount = processedData.length;
   if (!showZeroValues) {
-    filteredData = data.filter(d => {
+    filteredData = processedData.filter(d => {
       const value = d.measures[firstMeasureKey];
       return value !== null && value !== undefined && +value !== 0;
     });
@@ -3427,8 +3978,51 @@ function renderBarChart(g: any, data: any[], width: number, height: number, sett
     return;
   }
   
-  if (isDateDimension) {
-    // Sort filtered data by date
+  // Apply sorting based on settings
+  const xSort = settings?.axes?.x?.sort || 'none';
+  
+  if (xSort !== 'none') {
+    if (xSort === 'asc') {
+      if (isDateDimension) {
+        filteredData = [...filteredData].sort((a, b) => 
+          new Date(a.dimensions[firstDimKey]).getTime() - new Date(b.dimensions[firstDimKey]).getTime()
+        );
+      } else {
+        filteredData = [...filteredData].sort((a, b) => {
+          const keyA = getCompositeKey(a);
+          const keyB = getCompositeKey(b);
+          if (typeof keyA === 'string' && typeof keyB === 'string') {
+            return keyA.localeCompare(keyB);
+          }
+          return keyA - keyB;
+        });
+      }
+    } else if (xSort === 'desc') {
+      if (isDateDimension) {
+        filteredData = [...filteredData].sort((a, b) => 
+          new Date(b.dimensions[firstDimKey]).getTime() - new Date(a.dimensions[firstDimKey]).getTime()
+        );
+      } else {
+        filteredData = [...filteredData].sort((a, b) => {
+          const keyA = getCompositeKey(a);
+          const keyB = getCompositeKey(b);
+          if (typeof keyA === 'string' && typeof keyB === 'string') {
+            return keyB.localeCompare(keyA);
+          }
+          return keyB - keyA;
+        });
+      }
+    } else if (xSort === 'value_asc') {
+      filteredData = [...filteredData].sort((a, b) => 
+        +a.measures[firstMeasureKey] - +b.measures[firstMeasureKey]
+      );
+    } else if (xSort === 'value_desc') {
+      filteredData = [...filteredData].sort((a, b) => 
+        +b.measures[firstMeasureKey] - +a.measures[firstMeasureKey]
+      );
+    }
+  } else if (isDateDimension) {
+    // Default date sorting if no sort specified
     filteredData = [...filteredData].sort((a, b) => 
       new Date(a.dimensions[firstDimKey]).getTime() - new Date(b.dimensions[firstDimKey]).getTime()
     );
@@ -3450,7 +4044,9 @@ function renderBarChart(g: any, data: any[], width: number, height: number, sett
     .domain([0, d3.max(filteredData, d => +d.measures[firstMeasureKey]) || 0])
     .range([adjustedHeight, 0]);
 
-  const colorScale = d3.scaleOrdinal(settings.colors?.palette || d3.schemeSet3);
+  // Use the color palette from settings for bar charts
+  const barColorPalette = resolveColorPalette(settings.colors?.palette, COLOR_PALETTES.set3);
+  const colorScale = d3.scaleOrdinal(barColorPalette);
 
   // Create smart X-axis
   let xAxis: any;
@@ -3535,6 +4131,35 @@ function renderBarChart(g: any, data: any[], width: number, height: number, sett
   g.append('g')
     .call(yAxis);
 
+  // Add axis labels
+  // X-axis label
+  const xAxisLabel = dimensionConfigs?.[0]?.displayName || formatDimensionName(firstDimKey);
+  g.append('text')
+    .attr('transform', `translate(${width / 2}, ${adjustedHeight + 50})`)
+    .style('text-anchor', 'middle')
+    .style('font-size', '12px')
+    .style('font-weight', 'bold')
+    .style('fill', '#333')
+    .text(xAxisLabel);
+
+  // Y-axis label - clean up measure name to show only unit
+  let cleanMeasureName = measureDisplayName;
+  if (cleanMeasureName.includes(' - ')) {
+    cleanMeasureName = cleanMeasureName.split(' - ')[0].trim();
+  } else if (cleanMeasureName.includes(' (')) {
+    cleanMeasureName = cleanMeasureName.split(' (')[0].trim();
+  }
+  
+  g.append('text')
+    .attr('transform', 'rotate(-90)')
+    .attr('y', -40)
+    .attr('x', -(adjustedHeight / 2))
+    .style('text-anchor', 'middle')
+    .style('font-size', '12px')
+    .style('font-weight', 'bold')
+    .style('fill', '#333')
+    .text(cleanMeasureName);
+
   // Add bars with enhanced interactions
   const bars = g.selectAll('.bar')
     .data(filteredData)
@@ -3562,7 +4187,11 @@ function renderBarChart(g: any, data: any[], width: number, height: number, sett
         return Math.max(0, yScale(value) - adjustedHeight);
       }
     })
-    .attr('fill', (d: any, i: number) => colorScale(i.toString()))
+    .attr('fill', (d: any, i: number) => {
+      // Use the color palette from settings for individual bars
+      const barColors = resolveColorPalette(settings.colors?.palette, COLOR_PALETTES.set3);
+      return barColors[i % barColors.length];
+    })
     .style('cursor', 'pointer')
     .style('opacity', 0.8);
 
@@ -3783,10 +4412,10 @@ function renderGroupedBarChart(g: any, data: any[], width: number, height: numbe
     .domain([0, maxValue * 1.1]) // Add 10% padding
     .range([height, 0]);
 
-  // Create color scale
+  // Create color scale using settings palette
   const colorScale = d3.scaleOrdinal()
     .domain(groupValues)
-    .range(d3.schemeSet3);
+    .range(settings.colors?.palette || COLOR_PALETTES.set3);
 
   // Add axes
   const xAxis = g.append('g')
@@ -4013,10 +4642,10 @@ function renderStackedBarChart(g: any, data: any[], width: number, height: numbe
     .domain([0, maxValue])
     .range([height, 0]);
 
-  // Create color scale
+  // Create color scale using settings palette
   const colorScale = d3.scaleOrdinal()
     .domain(Array.from(stackGroups.keys()))
-    .range(d3.schemeSet3);
+    .range(settings.colors?.palette || COLOR_PALETTES.set3);
 
   // Create stack generator
   const stack = d3.stack()
@@ -4103,6 +4732,47 @@ function renderStackedBarChart(g: any, data: any[], width: number, height: numbe
   }
 }
 
+// Helper function to get metric range
+function getMetricRange(metricName: string, data: any[]): { min: number; max: number } {
+  // Check if this is a known metric with fixed range
+  const normalizedMetric = metricName.toLowerCase();
+  
+  // Check exact match first
+  if (METRIC_FIXED_RANGES[normalizedMetric]) {
+    return METRIC_FIXED_RANGES[normalizedMetric];
+  }
+  
+  // Check for partial matches (e.g., ends with "_percentage", "_percent", "_rate")
+  for (const [key, range] of Object.entries(METRIC_FIXED_RANGES)) {
+    if (normalizedMetric.includes(key) || 
+        (key.includes('percentage') && normalizedMetric.endsWith('_percentage')) ||
+        (key.includes('percentage') && normalizedMetric.endsWith('_percent')) ||
+        (key.includes('rate') && normalizedMetric.endsWith('_rate'))) {
+      return range;
+    }
+  }
+  
+  // If no fixed range found, calculate from data
+  const validValues = data
+    .map(d => d.measures[metricName])
+    .filter(val => val !== null && val !== undefined && val !== '' && val !== '-')
+    .map(val => +val)
+    .filter(val => !isNaN(val));
+    
+  if (validValues.length > 0) {
+    const extent = d3.extent(validValues) as [number, number];
+    // Add 10% padding for dynamic ranges
+    const padding = (extent[1] - extent[0]) * 0.1;
+    return { 
+      min: extent[0] - padding, 
+      max: extent[1] + padding 
+    };
+  }
+  
+  // Default fallback
+  return { min: 0, max: 100 };
+}
+
 function renderLineChart(g: any, data: any[], width: number, height: number, settings: VisualizationSettings) {
   if (!data.length) return;
 
@@ -4155,18 +4825,24 @@ function renderLineChart(g: any, data: any[], width: number, height: number, set
       .tickValues(data.filter((_, i) => i % step === 0).map(d => d.dimensions[firstDimKey]));
   }
 
-  // Filter out invalid data for y-scale domain calculation
-  console.log('Debug BaseChart: Processing line chart data:', data.slice(0, 3));
-  const validYValues = data
-    .map(d => d.measures[firstMeasureKey])
-    .filter(val => val !== null && val !== undefined && val !== '' && val !== '-')
-    .map(val => +val)
-    .filter(val => !isNaN(val));
-    
-  console.log('Debug BaseChart: Valid Y values:', validYValues.slice(0, 5));
+  // Get the appropriate range for this metric
+  let metricRange = getMetricRange(firstMeasureKey, data);
   
+  // Override with custom min/max from settings if custom scale is enabled
+  if (settings.axes?.y?.customScale && (settings.axes?.y?.minValue !== undefined || settings.axes?.y?.maxValue !== undefined)) {
+    metricRange = {
+      min: settings.axes.y.minValue ?? metricRange.min,
+      max: settings.axes.y.maxValue ?? metricRange.max
+    };
+    console.log('Debug BaseChart: Using custom Y-axis range:', metricRange);
+  }
+  
+  console.log('Debug BaseChart: Processing line chart data:', data.slice(0, 3));
+  console.log('Debug BaseChart: Using metric range for', firstMeasureKey, ':', metricRange);
+  
+  // Use fixed range for known metrics or custom settings
   const yScale = d3.scaleLinear()
-    .domain(validYValues.length > 0 ? d3.extent(validYValues) as [number, number] : [0, 100])
+    .domain([metricRange.min, metricRange.max])
     .range([height, 0]);
 
   const line = d3.line<any>()
@@ -4212,7 +4888,7 @@ function renderLineChart(g: any, data: any[], width: number, height: number, set
   g.append('path')
     .datum(data)
     .attr('fill', 'none')
-    .attr('stroke', COLOR_PALETTES.set3[0]) // Use soft color
+    .attr('stroke', resolveColorPalette(settings.colors?.palette)[0]) // Use first color from palette
     .attr('stroke-width', 2)
     .attr('d', line);
 
@@ -4224,7 +4900,7 @@ function renderLineChart(g: any, data: any[], width: number, height: number, set
     .attr('cx', (d: any) => isDateDimension ? xScale(new Date(d.dimensions[firstDimKey])) : (xScale(d.dimensions[firstDimKey]) || 0))
     .attr('cy', (d: any) => yScale(+d.measures[firstMeasureKey]))
     .attr('r', 4)
-    .attr('fill', COLOR_PALETTES.set3[0]); // Use soft color
+    .attr('fill', resolveColorPalette(settings.colors?.palette)[0]); // Use first color from palette
 }
 
 // Multi-series area chart renderer (overlaid, not stacked)
@@ -4307,8 +4983,10 @@ function renderMultiSeriesAreaChart(
       .tickValues(uniqueValues.filter((_, i) => i % step === 0));
   }
 
-  // Calculate Y domain across all visible series
-  const yDomain = calculateYDomain(visibleSeries, true);
+  // Calculate Y domain across all processed series
+  const customMin = settings.axes?.y?.customScale ? settings.axes?.y?.minValue : undefined;
+  const customMax = settings.axes?.y?.customScale ? settings.axes?.y?.maxValue : undefined;
+  const yDomain = calculateYDomain(visibleSeries, true, undefined, customMin, customMax);
   const yScale = d3.scaleLinear()
     .domain(yDomain)
     .range([height, 0]);
@@ -4437,25 +5115,30 @@ function renderMultiSeriesAreaChart(
   });
 }
 
-function renderAreaChart(g: any, data: any[], width: number, height: number, settings: VisualizationSettings, callbacks?: any, dimensionConfig?: any) {
+function renderAreaChart(g: any, data: any[], width: number, height: number, settings: VisualizationSettings, callbacks?: any, dimensionConfig?: any, metadata?: any) {
   if (!data.length) return;
 
+  // Apply aggregation based on measure configuration
+  const processedData = aggregateData(data, metadata);
+
   // Use configured dimension field if available, otherwise fall back to first key
-  const firstDimKey = dimensionConfig?.field || Object.keys(data[0].dimensions)[0];
-  const measureKeys = Object.keys(data[0].measures);
+  const firstDimKey = dimensionConfig?.field || Object.keys(processedData[0].dimensions)[0];
+  const measureKeys = Object.keys(processedData[0].measures);
   const firstMeasureKey = measureKeys[0];
 
   if (!firstDimKey || !firstMeasureKey) return;
 
   // Detect if the dimension is a date
-  const isDateDimension = isDateField(data[0].dimensions[firstDimKey]);
+  const isDateDimension = isDateField(processedData[0].dimensions[firstDimKey]);
   
   let xScale: any;
   let xAxis: any;
   
+  let dataToUse = processedData;
+  
   if (isDateDimension) {
     // Parse dates and sort data
-    const sortedData = [...data].sort((a, b) => 
+    const sortedData = [...processedData].sort((a, b) => 
       new Date(a.dimensions[firstDimKey]).getTime() - new Date(b.dimensions[firstDimKey]).getTime()
     );
     
@@ -4475,26 +5158,28 @@ function renderAreaChart(g: any, data: any[], width: number, height: number, set
       .tickFormat(d => formatDateForDisplay(d as Date, false, false));
       
     // Update data reference
-    data = sortedData;
+    dataToUse = sortedData;
   } else {
     // For non-date dimensions, use point scale for continuous area visualization
     const areaPadding = 40; // Add padding to prevent edge cutoff
     xScale = d3.scalePoint()
-      .domain(data.map(d => d.dimensions[firstDimKey]))
+      .domain(processedData.map(d => d.dimensions[firstDimKey]))
       .range([areaPadding, width - areaPadding])
       .padding(0.5);
     
     // Smart labeling for non-dates
     const maxLabels = Math.max(3, Math.floor(width / 60));
-    const step = Math.max(1, Math.ceil(data.length / maxLabels));
+    const step = Math.max(1, Math.ceil(processedData.length / maxLabels));
     
     xAxis = d3.axisBottom(xScale)
-      .tickValues(data.filter((_, i) => i % step === 0).map(d => d.dimensions[firstDimKey]));
+      .tickValues(processedData.filter((_, i) => i % step === 0).map(d => d.dimensions[firstDimKey]));
   }
 
   // Check if we have multiple measures for stacked area
   const isStacked = measureKeys.length > 1;
-  const colorScale = d3.scaleOrdinal(settings.colors?.palette || d3.schemeSet3);
+  // Use the color palette from settings for bar charts
+  const barColorPalette = resolveColorPalette(settings.colors?.palette, COLOR_PALETTES.set3);
+  const colorScale = d3.scaleOrdinal(barColorPalette);
 
   let yScale: any;
   let areaGenerator: any;
@@ -4506,7 +5191,7 @@ function renderAreaChart(g: any, data: any[], width: number, height: number, set
       .keys(measureKeys)
       .value((d: any, key: string) => +d.measures[key] || 0);
     
-    stackedData = stack(data);
+    stackedData = stack(dataToUse);
     
     // Find the maximum y value across all stacks
     const maxY = d3.max(stackedData, layer => d3.max(layer, d => d[1])) || 0;
@@ -4530,7 +5215,7 @@ function renderAreaChart(g: any, data: any[], width: number, height: number, set
   } else {
     // Single area
     yScale = d3.scaleLinear()
-      .domain([0, d3.max(data, d => +d.measures[firstMeasureKey]) || 0])
+      .domain([0, d3.max(dataToUse, d => +d.measures[firstMeasureKey]) || 0])
       .range([height, 0]);
     
     areaGenerator = d3.area<any>()
@@ -4574,7 +5259,11 @@ function renderAreaChart(g: any, data: any[], width: number, height: number, set
     areas.append('path')
       .attr('class', 'area')
       .attr('d', areaGenerator)
-      .attr('fill', (d: any, i: number) => colorScale(i.toString()))
+      .attr('fill', (d: any, i: number) => {
+        // Use the color palette from settings for area charts
+        const areaColors = resolveColorPalette(settings.colors?.palette, COLOR_PALETTES.set3);
+        return areaColors[i % areaColors.length];
+      })
       .attr('fill-opacity', 0.7)
       .style('cursor', 'pointer');
     
@@ -4810,16 +5499,21 @@ function renderAreaChart(g: any, data: any[], width: number, height: number, set
   }
 }
 
-function renderPieChart(g: any, data: any[], width: number, height: number, settings: VisualizationSettings) {
+function renderPieChart(g: any, data: any[], width: number, height: number, settings: VisualizationSettings, metadata?: any) {
   if (!data.length) return;
 
-  const firstDimKey = Object.keys(data[0].dimensions)[0];
-  const firstMeasureKey = Object.keys(data[0].measures)[0];
+  // Apply aggregation based on measure configuration
+  const processedData = aggregateData(data, metadata);
+
+  const firstDimKey = Object.keys(processedData[0].dimensions)[0];
+  const firstMeasureKey = Object.keys(processedData[0].measures)[0];
 
   if (!firstDimKey || !firstMeasureKey) return;
 
   const radius = Math.min(width, height) / 2;
-  const colorScale = d3.scaleOrdinal(settings.colors?.palette || d3.schemeSet3);
+  // Use the color palette from settings for bar charts
+  const barColorPalette = resolveColorPalette(settings.colors?.palette, COLOR_PALETTES.set3);
+  const colorScale = d3.scaleOrdinal(barColorPalette);
 
   const pie = d3.pie<any>()
     .value(d => +d.measures[firstMeasureKey]);
@@ -4828,7 +5522,7 @@ function renderPieChart(g: any, data: any[], width: number, height: number, sett
     .innerRadius(0)
     .outerRadius(radius);
 
-  const pieData = pie(data);
+  const pieData = pie(processedData);
 
   g.attr('transform', `translate(${width / 2},${height / 2})`);
 
@@ -4965,8 +5659,10 @@ function renderMultiSeriesLineChart(
       .tickValues(uniqueValues.filter((_, i) => i % step === 0));
   }
 
-  // Calculate Y domain across all visible series
-  const yDomain = calculateYDomain(visibleSeries, true);
+  // Calculate Y domain across all processed series
+  const customMin = settings.axes?.y?.customScale ? settings.axes?.y?.minValue : undefined;
+  const customMax = settings.axes?.y?.customScale ? settings.axes?.y?.maxValue : undefined;
+  const yDomain = calculateYDomain(visibleSeries, true, undefined, customMin, customMax);
   const yScale = d3.scaleLinear()
     .domain(yDomain)
     .range([height, 0]);
@@ -5016,15 +5712,26 @@ function renderMultiSeriesLineChart(
     .style('font-size', '12px')
     .style('font-weight', 'bold')
     .style('fill', '#333')
-    .text(dimensionConfig?.label || firstDimKey);
+    .text(dimensionConfig?.displayName || dimensionConfig?.label || formatDimensionName(firstDimKey));
 
   // Y-axis label - show combined measure names if multiple measures
-  const measureNames = [...new Set(visibleSeries.map(s => s.name))];
-  const yAxisLabel = measureNames.length === 1 
-    ? measureNames[0] 
-    : measureNames.length <= 3 
-      ? measureNames.join(' / ')
-      : `Multiple Measures (${measureNames.length})`;
+  // Extract just the measure type (e.g., "Growth Index" from "Growth Index - Sandhill PD. 1")
+  const cleanMeasureNames = [...new Set(visibleSeries.map(s => {
+    // Remove everything after " - " or " (" to get just the measure name
+    const name = s.name;
+    if (name.includes(' - ')) {
+      return name.split(' - ')[0].trim();
+    } else if (name.includes(' (')) {
+      return name.split(' (')[0].trim();
+    }
+    return name;
+  }))];
+  
+  const yAxisLabel = cleanMeasureNames.length === 1 
+    ? cleanMeasureNames[0] 
+    : cleanMeasureNames.length <= 3 
+      ? cleanMeasureNames.join(' / ')
+      : `Multiple Measures (${cleanMeasureNames.length})`;
   
   g.append('text')
     .attr('transform', 'rotate(-90)')
@@ -5419,7 +6126,7 @@ function renderLegend(svg: any, legendItems: LegendItem[], x: number, y: number,
   const legend = svg.append('g')
     .attr('class', 'legend');
 
-  const isHorizontal = position === 'top' || position === 'bottom';
+  const isHorizontal = ['top', 'bottom', 'topLeft', 'topRight', 'bottomLeft', 'bottomRight'].includes(position);
   
   if (isHorizontal) {
     // Create temporary text elements to measure actual widths
@@ -5467,8 +6174,11 @@ function renderLegend(svg: any, legendItems: LegendItem[], x: number, y: number,
     const rowHeight = 25; // Increased row height for better spacing
     const legendHeight = rows.length * rowHeight;
     
-    // Position legend above chart with proper centering
-    legend.attr('transform', `translate(${x - availableWidth / 2}, ${y - legendHeight + 10})`);
+    // Position legend based on position type
+    // Only center for top/bottom positions, not corners
+    const shouldCenter = position === 'top' || position === 'bottom';
+    const legendXOffset = shouldCenter ? x - availableWidth / 2 : x;
+    legend.attr('transform', `translate(${legendXOffset}, ${y - legendHeight + 10})`);
     
     const legendGroups = legend.selectAll('.legend-item')
       .data(legendItems)
@@ -5493,9 +6203,9 @@ function renderLegend(svg: any, legendItems: LegendItem[], x: number, y: number,
           xPos += itemWidths[itemIdx];
         }
         
-        // Center the row
+        // Center the row only for top/bottom positions
         const rowWidth = rows[rowIndex].reduce((sum, idx) => sum + itemWidths[idx], 0);
-        const rowOffset = (availableWidth - rowWidth) / 2;
+        const rowOffset = shouldCenter ? (availableWidth - rowWidth) / 2 : 0;
         
         return `translate(${rowOffset + xPos}, ${rowIndex * rowHeight})`;
       })
@@ -5647,11 +6357,14 @@ function createStatsBox(g: any, x: number, y: number, stats: Array<{label: strin
 }
 
 // Professional scatter plot with advanced statistical analysis
-function renderScatterPlot(g: any, data: any[], width: number, height: number, settings: VisualizationSettings, callbacks?: any) {
+function renderScatterPlot(g: any, data: any[], width: number, height: number, settings: VisualizationSettings, callbacks?: any, metadata?: any) {
   if (!data.length) return;
   
-  const dimKeys = Object.keys(data[0].dimensions);
-  const measureKeys = Object.keys(data[0].measures);
+  // Apply aggregation based on measure configuration
+  const processedData = aggregateData(data, metadata);
+  
+  const dimKeys = Object.keys(processedData[0].dimensions);
+  const measureKeys = Object.keys(processedData[0].measures);
   
   if (measureKeys.length < 2) {
     console.warn('Scatter plot requires at least 2 measures');
@@ -5664,8 +6377,8 @@ function renderScatterPlot(g: any, data: any[], width: number, height: number, s
   const colorKey = dimKeys[0]; // Use first dimension for color grouping
   
   // Extract numeric values
-  const xValues = data.map(d => +d.measures[xKey]).filter(v => !isNaN(v));
-  const yValues = data.map(d => +d.measures[yKey]).filter(v => !isNaN(v));
+  const xValues = processedData.map(d => +d.measures[xKey]).filter(v => !isNaN(v));
+  const yValues = processedData.map(d => +d.measures[yKey]).filter(v => !isNaN(v));
   
   // Calculate statistical metrics
   const statistics = calculateBivariateStatistics(xValues, yValues);
@@ -5691,14 +6404,14 @@ function renderScatterPlot(g: any, data: any[], width: number, height: number, s
   
   // Size scale for bubble chart (if third measure exists)
   const sizeScale = sizeKey ? d3.scaleLinear()
-    .domain(d3.extent(data, d => +d.measures[sizeKey]) as [number, number])
+    .domain(d3.extent(processedData, d => +d.measures[sizeKey]) as [number, number])
     .range([4, 20]) : null;
   
   // Color scale for grouping
-  const groups = colorKey ? Array.from(new Set(data.map(d => d.dimensions[colorKey]))) : ['All'];
+  const groups = colorKey ? Array.from(new Set(processedData.map(d => d.dimensions[colorKey]))) : ['All'];
   const colorScale = d3.scaleOrdinal()
     .domain(groups)
-    .range(d3.schemeTableau10);
+    .range(resolveColorPalette(settings.colors?.palette, COLOR_PALETTES.tableau10));
   
   // Add grid lines
   const xGridlines = g.append('g')
@@ -5774,12 +6487,12 @@ function renderScatterPlot(g: any, data: any[], width: number, height: number, s
   
   // Add confidence ellipse
   if (statistics.covariance !== 0) {
-    drawConfidenceEllipse(g, statistics, xScale, yScale, COLOR_PALETTES.set3[0]);
+    drawConfidenceEllipse(g, statistics, xScale, yScale, resolveColorPalette(settings.colors?.palette)[0]);
   }
   
   // Add density contours for large datasets
-  if (data.length > 100) {
-    const contourData = calculateDensityContours(data, xKey, yKey, xScale, yScale);
+  if (processedData.length > 100) {
+    const contourData = calculateDensityContours(processedData, xKey, yKey, xScale, yScale);
     
     g.append('g')
       .attr('class', 'contours')
@@ -5789,21 +6502,21 @@ function renderScatterPlot(g: any, data: any[], width: number, height: number, s
       .append('path')
       .attr('d', d3.geoPath())
       .attr('fill', 'none')
-      .attr('stroke', COLOR_PALETTES.set3[0])
+      .attr('stroke', resolveColorPalette(settings.colors?.palette)[0])
       .attr('stroke-width', 1)
       .attr('opacity', 0.3);
   }
   
   // Add points
   const dots = g.selectAll('.dot')
-    .data(data.filter(d => !isNaN(+d.measures[xKey]) && !isNaN(+d.measures[yKey])))
+    .data(processedData.filter(d => !isNaN(+d.measures[xKey]) && !isNaN(+d.measures[yKey])))
     .enter()
     .append('circle')
     .attr('class', 'dot')
     .attr('cx', (d: any) => xScale(+d.measures[xKey]))
     .attr('cy', (d: any) => yScale(+d.measures[yKey]))
     .attr('r', (d: any) => sizeScale && sizeKey ? sizeScale(+d.measures[sizeKey]) : 5)
-    .attr('fill', (d: any) => colorKey ? colorScale(d.dimensions[colorKey]) : COLOR_PALETTES.set3[0])
+    .attr('fill', (d: any) => colorKey ? colorScale(d.dimensions[colorKey]) : resolveColorPalette(settings.colors?.palette)[0])
     .style('cursor', 'pointer')
     .style('opacity', 0.7)
     .style('stroke', '#fff')

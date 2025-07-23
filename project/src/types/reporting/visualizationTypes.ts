@@ -66,6 +66,10 @@ export interface AxisConfiguration {
   tickSize?: number;
   tickValues?: any[];
   tickFormat?: string;
+  customScale?: boolean;
+  minValue?: number;
+  maxValue?: number;
+  sort?: 'none' | 'asc' | 'desc' | 'value_asc' | 'value_desc';
   grid: {
     show: boolean;
     color?: string;

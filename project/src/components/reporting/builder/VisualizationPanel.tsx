@@ -1,5 +1,5 @@
 import React from 'react';
-import { BarChart, LineChart, PieChart, Map, TrendingUp, Grid, Zap, Activity, Table } from 'lucide-react';
+import { BarChart, LineChart, PieChart, Map, TrendingUp, Grid, Zap, Activity, Table, Settings } from 'lucide-react';
 import { ChartType, VisualizationSettings, Dimension, Measure } from '../../../types/reporting';
 
 interface VisualizationPanelProps {
@@ -40,7 +40,8 @@ export const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
         gridLines: false,
         tickFormat: 'auto',
         tickAngle: 0,
-        tickCount: 'auto'
+        tickCount: 'auto',
+        sort: 'none'
       },
       y: {
         show: true,
@@ -48,7 +49,8 @@ export const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
         gridLines: true,
         tickFormat: 'auto',
         tickAngle: 0,
-        tickCount: 'auto'
+        tickCount: 'auto',
+        sort: 'none'
       }
     },
     legends: {
@@ -313,126 +315,18 @@ export const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
         ))}
       </div>
 
-      {/* Chart Settings */}
+      {/* Chart Settings Notice */}
       {chartType && (
         <div className="border-t pt-6">
-          <h4 className="text-sm font-medium text-gray-900 mb-4">Chart Settings</h4>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Chart Width
-              </label>
-              <input
-                type="number"
-                value={mergedSettings.dimensions.width}
-                onChange={(e) => onSettingsChange({
-                  dimensions: {
-                    ...mergedSettings.dimensions,
-                    width: parseInt(e.target.value) || 800,
-                  }
-                })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                min="300"
-                max="2000"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Chart Height
-              </label>
-              <input
-                type="number"
-                value={mergedSettings.dimensions.height}
-                onChange={(e) => onSettingsChange({
-                  dimensions: {
-                    ...mergedSettings.dimensions,
-                    height: parseInt(e.target.value) || 400,
-                  }
-                })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                min="200"
-                max="1200"
-              />
-            </div>
-          </div>
-
-          <div className="mt-4 space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Color Scheme
-              </label>
-              <select
-                value={mergedSettings.colors.palette}
-                onChange={(e) => onSettingsChange({
-                  colors: {
-                    ...mergedSettings.colors,
-                    palette: e.target.value,
-                  }
-                })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-              >
-                <optgroup label="Colorblind Safe">
-                  <option value="colorblindSafe">Colorblind Safe (Default)</option>
-                  <option value="accessible">Accessible</option>
-                  <option value="viridis">Viridis (Scientific)</option>
-                  <option value="cividis">Cividis (Scientific)</option>
-                </optgroup>
-                <optgroup label="Standard">
-                  <option value="category10">Category 10</option>
-                  <option value="tableau10">Tableau 10</option>
-                </optgroup>
-                <optgroup label="Monochromatic">
-                  <option value="blues">Blues</option>
-                  <option value="greens">Greens</option>
-                </optgroup>
-              </select>
-            </div>
-
-            <div className="flex items-center space-x-6">
-              <label className="flex items-center">
-                <input
-                  type="checkbox"
-                  checked={mergedSettings.legends.show}
-                  onChange={(e) => onSettingsChange({
-                    legends: {
-                      ...mergedSettings.legends,
-                      show: e.target.checked,
-                    }
-                  })}
-                  className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-                />
-                <span className="ml-2 text-sm text-gray-700">Show Legend</span>
-              </label>
-
-              <label className="flex items-center">
-                <input
-                  type="checkbox"
-                  checked={mergedSettings.tooltips.show}
-                  onChange={(e) => onSettingsChange({
-                    tooltips: {
-                      ...mergedSettings.tooltips,
-                      show: e.target.checked,
-                    }
-                  })}
-                  className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-                />
-                <span className="ml-2 text-sm text-gray-700">Show Tooltips</span>
-              </label>
-
-              <label className="flex items-center">
-                <input
-                  type="checkbox"
-                  checked={mergedSettings.animations.enabled}
-                  onChange={(e) => onSettingsChange({
-                    animations: {
-                      ...mergedSettings.animations,
-                      enabled: e.target.checked,
-                    }
-                  })}
-                  className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-                />
-                <span className="ml-2 text-sm text-gray-700">Enable Animations</span>
-              </label>
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <div className="flex items-start">
+              <Settings size={20} className="text-blue-600 mr-3 mt-0.5" />
+              <div>
+                <h4 className="text-sm font-medium text-blue-900 mb-1">Chart Settings</h4>
+                <p className="text-sm text-blue-800">
+                  Advanced chart settings are now available in the Preview step, where you can see your changes applied instantly to the chart.
+                </p>
+              </div>
             </div>
           </div>
         </div>

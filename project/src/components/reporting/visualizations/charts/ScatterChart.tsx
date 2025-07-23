@@ -7,9 +7,10 @@ interface ScatterChartProps {
   settings: VisualizationSettings;
   className?: string;
   onDataSelect?: (data: any[], position: { x: number; y: number }, title: string) => void;
+  dimensions?: any[];
 }
 
-export const ScatterChart: React.FC<ScatterChartProps> = ({ data, settings, className, onDataSelect }) => {
+export const ScatterChart: React.FC<ScatterChartProps> = ({ data, settings, className, onDataSelect, dimensions }) => {
   return (
     <BaseChart
       data={data}
@@ -17,6 +18,7 @@ export const ScatterChart: React.FC<ScatterChartProps> = ({ data, settings, clas
       chartType="scatter"
       className={className}
       onDataSelect={onDataSelect}
+      dimensions={dimensions}
     />
   );
 };

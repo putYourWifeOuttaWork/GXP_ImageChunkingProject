@@ -7,9 +7,10 @@ interface BoxPlotProps {
   settings: VisualizationSettings;
   className?: string;
   onDataSelect?: (data: any[], position: { x: number; y: number }, title: string) => void;
+  dimensions?: any[];
 }
 
-export const BoxPlot: React.FC<BoxPlotProps> = ({ data, settings, className, onDataSelect }) => {
+export const BoxPlot: React.FC<BoxPlotProps> = ({ data, settings, className, onDataSelect, dimensions }) => {
   return (
     <BaseChart
       data={data}
@@ -17,6 +18,7 @@ export const BoxPlot: React.FC<BoxPlotProps> = ({ data, settings, className, onD
       settings={settings}
       className={className}
       onDataSelect={onDataSelect}
+      dimensions={dimensions}
     />
   );
 };

@@ -435,13 +435,51 @@ const reportBuilderReducer = (state: ReportBuilderState, action: ReportBuilderAc
       };
     
     case 'UPDATE_VISUALIZATION_SETTINGS':
+      // Deep merge the visualization settings
+      const updatedVisualizationSettings = {
+        ...state.visualizationSettings,
+        ...action.payload,
+        // Ensure nested objects are properly merged
+        dimensions: action.payload.dimensions ? {
+          ...state.visualizationSettings.dimensions,
+          ...action.payload.dimensions
+        } : state.visualizationSettings.dimensions,
+        colors: action.payload.colors ? {
+          ...state.visualizationSettings.colors,
+          ...action.payload.colors
+        } : state.visualizationSettings.colors,
+        axes: action.payload.axes ? {
+          ...state.visualizationSettings.axes,
+          ...action.payload.axes,
+          x: action.payload.axes?.x ? {
+            ...state.visualizationSettings.axes?.x,
+            ...action.payload.axes.x
+          } : state.visualizationSettings.axes?.x,
+          y: action.payload.axes?.y ? {
+            ...state.visualizationSettings.axes?.y,
+            ...action.payload.axes.y
+          } : state.visualizationSettings.axes?.y
+        } : state.visualizationSettings.axes,
+        legends: action.payload.legends ? {
+          ...state.visualizationSettings.legends,
+          ...action.payload.legends
+        } : state.visualizationSettings.legends,
+        tooltips: action.payload.tooltips ? {
+          ...state.visualizationSettings.tooltips,
+          ...action.payload.tooltips
+        } : state.visualizationSettings.tooltips,
+        animations: action.payload.animations ? {
+          ...state.visualizationSettings.animations,
+          ...action.payload.animations
+        } : state.visualizationSettings.animations
+      };
+      
       return {
         ...state,
-        visualizationSettings: {
-          ...state.visualizationSettings,
-          ...action.payload
-        },
-        isDirty: true
+        visualizationSettings: updatedVisualizationSettings,
+        // Don't mark as dirty for visualization settings changes
+        // These are UI preferences that don't need to trigger auto-save
+        isDirty: state.isDirty
       };
     
     case 'SET_ACTIVE_STEP':
@@ -457,7 +495,8 @@ const reportBuilderReducer = (state: ReportBuilderState, action: ReportBuilderAc
       return { ...state, selectedMeasures: action.payload };
     
     case 'SET_SELECTED_SEGMENTS':
-      return { ...state, selectedSegments: action.payload };
+      console.log('🎯 SET_SELECTED_SEGMENTS:', action.payload, 'Previous:', state.selectedSegments);
+      return { ...state, selectedSegments: action.payload, isDirty: true };
     
     case 'SET_ISOLATION_FILTERS':
       return { ...state, isolationFilters: action.payload, isDirty: true };
@@ -487,6 +526,8 @@ const reportBuilderReducer = (state: ReportBuilderState, action: ReportBuilderAc
       return initialState;
     
     case 'LOAD_REPORT':
+      console.log('📥 LOAD_REPORT - segmentBy:', action.payload.segmentBy, 'isolationFilters:', action.payload.isolationFilters);
+      console.log('📥 LOAD_REPORT - current state segments:', state.selectedSegments, 'current isolation:', state.isolationFilters);
       return {
         ...state,
         name: action.payload.name,
@@ -497,8 +538,8 @@ const reportBuilderReducer = (state: ReportBuilderState, action: ReportBuilderAc
         dimensions: action.payload.dimensions,
         measures: action.payload.measures,
         filters: action.payload.filters,
-        selectedSegments: action.payload.segmentBy || [],
-        isolationFilters: action.payload.isolationFilters || {},
+        selectedSegments: action.payload.segmentBy || state.selectedSegments || [],
+        isolationFilters: action.payload.isolationFilters || state.isolationFilters || {},
         chartType: action.payload.chartType,
         visualizationSettings: action.payload.visualizationSettings,
         isDirty: false,
@@ -518,10 +559,27 @@ export const useReportBuilder = (initialReportId?: string) => {
   
   // Initialize state with cache if available
   const [cachedData] = useState(() => {
-    // Only load from cache if no specific report ID is provided
-    if (!initialReportId) {
-      return loadStateFromCache();
+    // Always try to load from cache to preserve work across refreshes
+    const cached = loadStateFromCache();
+    
+    // If we're editing a specific report
+    if (initialReportId) {
+      // If cached report ID matches, use cached state
+      if (cached.reportId === initialReportId && cached.state) {
+        console.log('Loading cached state for report:', initialReportId);
+        return cached;
+      }
+      // Otherwise, don't use cache for a different report
+      return { state: null, reportId: null };
     }
+    
+    // For new reports, always use cached state if available
+    // This preserves work across page refreshes
+    if (cached.state) {
+      console.log('Loading cached state for new report');
+      return cached;
+    }
+    
     return { state: null, reportId: null };
   });
   
@@ -543,6 +601,77 @@ export const useReportBuilder = (initialReportId?: string) => {
       return () => clearTimeout(timeoutId);
     }
   }, [state, initialReportId]);
+  
+  // Save functionality (moved up to fix temporal dead zone issue)
+  const handleSave = useCallback(async () => {
+    if (!state.isValid) {
+      throw new Error('Report configuration is not valid');
+    }
+    
+    if (!user) {
+      throw new Error('User not authenticated');
+    }
+    
+    dispatch({ type: 'SET_IS_LOADING', payload: true });
+    
+    try {
+      // Consolidate duplicate dimensions before saving
+      const consolidatedDimensions = consolidateDimensions(state.dimensions);
+      
+      // Don't add segments as dimensions - they should remain separate
+      // Segments are handled via the segmentBy field in the report config
+      
+      const reportData: any = {
+        name: state.name,
+        description: state.description,
+        category: state.category,
+        type: state.type,
+        dataSources: state.dataSources,
+        dimensions: consolidatedDimensions,
+        measures: state.measures,
+        filters: state.filters,
+        segmentBy: state.selectedSegments, // Add segmentBy for SQL query generation
+        isolationFilters: state.isolationFilters, // Add selected isolation filter values
+        chartType: state.chartType,
+        visualizationSettings: state.visualizationSettings,
+        queryCacheTtl: 3600,
+        autoRefresh: false,
+        tags: [],
+      };
+      
+      if (initialReportId) {
+        await updateReport.mutateAsync({ reportId: initialReportId, updates: reportData });
+      } else {
+        await createReport.mutateAsync({
+          ...reportData,
+          createdByUserId: user.id,
+          companyId: userCompany?.company_id || null,
+          programIds: [],
+          isPublic: false,
+          isTemplate: false,
+        });
+      }
+      
+      dispatch({ type: 'SET_LAST_SAVED', payload: new Date().toISOString() });
+      
+      // Only invalidate queries if this is not an auto-save
+      // Auto-save should not trigger a refetch of the report data
+      if (!state.autoSave || !initialReportId) {
+        queryClient.invalidateQueries({ queryKey: reportQueryKeys.lists() });
+      }
+      
+      // Don't clear cache after auto-save - we want to preserve the current state
+      if (!state.autoSave) {
+        clearStateCache();
+      }
+    } catch (error) {
+      console.error('Error saving report:', error);
+      // Re-throw the error so it can be handled by the calling function
+      throw error;
+    } finally {
+      dispatch({ type: 'SET_IS_LOADING', payload: false });
+    }
+  }, [state, initialReportId, updateReport, createReport, queryClient, user, userCompany]);
   
   // Auto-save functionality
   useEffect(() => {
@@ -670,8 +799,10 @@ export const useReportBuilder = (initialReportId?: string) => {
   }, []);
   
   const updateVisualizationSettings = useCallback((settings: Partial<VisualizationSettings>) => {
+    console.log('📊 updateVisualizationSettings called with:', settings);
+    console.log('📊 Current isDirty state:', state.isDirty);
     dispatch({ type: 'UPDATE_VISUALIZATION_SETTINGS', payload: settings });
-  }, []);
+  }, [state.isDirty]);
   
   const setActiveStep = useCallback((step: number) => {
     dispatch({ type: 'SET_ACTIVE_STEP', payload: step });
@@ -694,9 +825,10 @@ export const useReportBuilder = (initialReportId?: string) => {
   }, []);
   
   const setIsolationFilters = useCallback((filters: Record<string, string[]>) => {
-    console.log('setIsolationFilters called with:', filters);
+    console.log('🔍 setIsolationFilters called with:', filters);
+    console.log('🔍 Current isolation filters:', state.isolationFilters);
     dispatch({ type: 'SET_ISOLATION_FILTERS', payload: filters });
-  }, []);
+  }, [state.isolationFilters]);
   
   const loadReport = useCallback((report: ReportConfiguration) => {
     dispatch({ type: 'LOAD_REPORT', payload: report });
@@ -727,70 +859,6 @@ export const useReportBuilder = (initialReportId?: string) => {
       });
     }
   }, [state.dimensions]);
-  
-  // Save functionality
-  const handleSave = useCallback(async () => {
-    if (!state.isValid) {
-      throw new Error('Report configuration is not valid');
-    }
-    
-    if (!user) {
-      throw new Error('User not authenticated');
-    }
-    
-    dispatch({ type: 'SET_IS_LOADING', payload: true });
-    
-    try {
-      // Consolidate duplicate dimensions before saving
-      const consolidatedDimensions = consolidateDimensions(state.dimensions);
-      
-      // Don't add segments as dimensions - they should remain separate
-      // Segments are handled via the segmentBy field in the report config
-      
-      const reportData: any = {
-        name: state.name,
-        description: state.description,
-        category: state.category,
-        type: state.type,
-        dataSources: state.dataSources,
-        dimensions: consolidatedDimensions,
-        measures: state.measures,
-        filters: state.filters,
-        segmentBy: state.selectedSegments, // Add segmentBy for SQL query generation
-        isolationFilters: state.isolationFilters, // Add selected isolation filter values
-        chartType: state.chartType,
-        visualizationSettings: state.visualizationSettings,
-        queryCacheTtl: 3600,
-        autoRefresh: false,
-        tags: [],
-      };
-      
-      if (initialReportId) {
-        await updateReport.mutateAsync({ reportId: initialReportId, updates: reportData });
-      } else {
-        await createReport.mutateAsync({
-          ...reportData,
-          createdByUserId: user.id,
-          companyId: userCompany?.company_id || null,
-          programIds: [],
-          isPublic: false,
-          isTemplate: false,
-        });
-      }
-      
-      dispatch({ type: 'SET_LAST_SAVED', payload: new Date().toISOString() });
-      queryClient.invalidateQueries({ queryKey: reportQueryKeys.lists() });
-      
-      // Clear cache after successful save
-      clearStateCache();
-    } catch (error) {
-      console.error('Error saving report:', error);
-      // Re-throw the error so it can be handled by the calling function
-      throw error;
-    } finally {
-      dispatch({ type: 'SET_IS_LOADING', payload: false });
-    }
-  }, [state, initialReportId, updateReport, createReport, queryClient, user, userCompany]);
   
   // Get available dimensions based on selected data sources
   const getAvailableDimensions = useCallback((): Dimension[] => {

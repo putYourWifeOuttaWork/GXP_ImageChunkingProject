@@ -41,6 +41,7 @@ interface SimpleFacilityFloorPlanProps {
   width?: number;
   height?: number;
   compact?: boolean;
+  showDebugBoundaries?: boolean;
 }
 
 export const SimpleFacilityFloorPlan: React.FC<SimpleFacilityFloorPlanProps> = ({
@@ -59,7 +60,8 @@ export const SimpleFacilityFloorPlan: React.FC<SimpleFacilityFloorPlanProps> = (
   cursorPosition,
   width = 900,
   height = 500,
-  compact = true
+  compact = true,
+  showDebugBoundaries = false
 }) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const brushOverlayRef = useRef<SVGSVGElement>(null);
@@ -106,6 +108,11 @@ export const SimpleFacilityFloorPlan: React.FC<SimpleFacilityFloorPlanProps> = (
   const padding = compact ? 30 : 50;
   const facilityWidth = facilityData.facility_info.dimensions.width;
   const facilityHeight = facilityData.facility_info.dimensions.height;
+  
+  // Visual boundary buffer to prevent equipment from appearing to overflow
+  // This accounts for stroke widths and visual rendering precision
+  // Increased to properly account for SVG padding and stroke rendering
+  const visualBoundaryBuffer = 2.0; // Buffer in facility units to ensure visual containment
   
   const scaleX = d3.scaleLinear()
     .domain([0, facilityWidth])
@@ -293,6 +300,12 @@ export const SimpleFacilityFloorPlan: React.FC<SimpleFacilityFloorPlanProps> = (
     // Add axis labels
     const axisGroup = g.append('g').attr('class', 'axis');
     
+    // Debug group for boundary visualization
+    const debugGroup = g.append('g')
+      .attr('class', 'debug-boundaries')
+      .attr('opacity', 0.5)
+      .style('display', showDebugBoundaries ? 'block' : 'none');
+    
     // X-axis labels
     for (let i = 0; i <= facilityWidth; i += 20) {
       axisGroup.append('text')
@@ -354,6 +367,7 @@ export const SimpleFacilityFloorPlan: React.FC<SimpleFacilityFloorPlanProps> = (
         .attr('stop-color', '#60A5FA') // Light blue
         .attr('stop-opacity', 0.05);
       
+      // Main gradient fill
       effectivenessGroup.append('circle')
         .attr('cx', scaleX(gasifier.x))
         .attr('cy', scaleY(gasifier.y))
@@ -361,6 +375,22 @@ export const SimpleFacilityFloorPlan: React.FC<SimpleFacilityFloorPlanProps> = (
         .style('fill', `url(#gasifier-gradient-${gasifier.equipment_id})`)
         .style('stroke', 'none')
         .style('pointer-events', 'none');
+      
+      // Add dashed concentric circles to show effectiveness zones
+      const ringCount = 4; // Number of rings
+      for (let i = 1; i <= ringCount; i++) {
+        const ringRadius = (effectiveRadiusPx * i) / ringCount;
+        effectivenessGroup.append('circle')
+          .attr('cx', scaleX(gasifier.x))
+          .attr('cy', scaleY(gasifier.y))
+          .attr('r', ringRadius)
+          .style('fill', 'none')
+          .style('stroke', '#9333EA')
+          .style('stroke-width', '1px')
+          .style('stroke-dasharray', '3,3')
+          .style('opacity', 0.09375 + (0.0375 * (ringCount - i + 1)))
+          .style('pointer-events', 'none');
+      }
     });
 
     // Draw equipment
@@ -502,17 +532,90 @@ export const SimpleFacilityFloorPlan: React.FC<SimpleFacilityFloorPlanProps> = (
           .style('fill', isAtOrigin ? '#FCA5A5' : style.color)
           .style('stroke', '#1F2937')
           .style('stroke-width', '2px');
+          
+        // Add airflow vector for fans
+        if (equipment.type === 'fan' && equipment.config) {
+          const cfm = equipment.config.magnitude_cfm || 1000;
+          const direction = equipment.config.direction || 0;
+          const activePercent = equipment.config.percentage_of_time_blowing || 100;
+          
+          // Calculate vector length based on CFM (scale: 1000 CFM = 30 pixels)
+          const vectorLength = (cfm / 1000) * 30;
+          
+          // Calculate end point of vector
+          const angleRad = (direction * Math.PI) / 180;
+          const endX = Math.cos(angleRad) * vectorLength;
+          const endY = Math.sin(angleRad) * vectorLength;
+          
+          // Create airflow vector group
+          const airflowGroup = equipGroup.append('g')
+            .attr('class', 'airflow-vector')
+            .style('opacity', activePercent / 100);
+          
+          // Draw vector arrow
+          airflowGroup.append('line')
+            .attr('x1', 0)
+            .attr('y1', 0)
+            .attr('x2', endX)
+            .attr('y2', endY)
+            .style('stroke', '#3B82F6')
+            .style('stroke-width', '3px')
+            .style('stroke-linecap', 'round');
+          
+          // Add arrowhead
+          const arrowSize = 8;
+          const arrowAngle = 30 * Math.PI / 180; // 30 degrees
+          
+          // Calculate arrowhead points
+          const arrowPoint1X = endX - arrowSize * Math.cos(angleRad - arrowAngle);
+          const arrowPoint1Y = endY - arrowSize * Math.sin(angleRad - arrowAngle);
+          const arrowPoint2X = endX - arrowSize * Math.cos(angleRad + arrowAngle);
+          const arrowPoint2Y = endY - arrowSize * Math.sin(angleRad + arrowAngle);
+          
+          airflowGroup.append('path')
+            .attr('d', `M ${arrowPoint1X},${arrowPoint1Y} L ${endX},${endY} L ${arrowPoint2X},${arrowPoint2Y}`)
+            .style('stroke', '#3B82F6')
+            .style('stroke-width', '3px')
+            .style('stroke-linecap', 'round')
+            .style('stroke-linejoin', 'round')
+            .style('fill', 'none');
+          
+          // Add CFM label if selected
+          if (isSelected) {
+            airflowGroup.append('text')
+              .attr('x', endX / 2)
+              .attr('y', endY / 2 - 5)
+              .attr('text-anchor', 'middle')
+              .style('font-size', '10px')
+              .style('font-weight', 'bold')
+              .style('fill', '#3B82F6')
+              .text(`${cfm} CFM`);
+          }
+        }
       } else if (style.shape === 'rect') {
         let rectWidth = style.size;
         let rectHeight = style.size;
         
         // For shelving, use custom dimensions from config if available
         if (equipment.type === 'shelving') {
-          rectWidth = equipment.config?.width || 40;
-          rectHeight = equipment.config?.height || 20;
+          // Get dimensions in facility units (feet)
+          const widthFt = equipment.config?.width || 40;
+          const heightFt = equipment.config?.height || 20;
+          const rotation = equipment.config?.rotation || 0;
+          
+          console.log('[SHELVING RENDER CHECK]', {
+            equipment_id: equipment.equipment_id,
+            storedDimensions: { width: widthFt, height: heightFt },
+            rotation: rotation,
+            renderNote: "Rect is drawn with stored dimensions, then rotated by SVG transform"
+          });
+          
+          // Convert to pixel dimensions using scale
+          rectWidth = scaleX(widthFt) - scaleX(0);
+          rectHeight = scaleY(heightFt) - scaleY(0);
           
           // Main shelving rectangle with lighter fill
-          equipGroup.append('rect')
+          const rect = equipGroup.append('rect')
             .attr('x', -rectWidth / 2)
             .attr('y', -rectHeight / 2)
             .attr('width', rectWidth)
@@ -520,6 +623,28 @@ export const SimpleFacilityFloorPlan: React.FC<SimpleFacilityFloorPlanProps> = (
             .style('fill', isAtOrigin ? '#FCA5A5' : '#E5E7EB')
             .style('stroke', '#4B5563')
             .style('stroke-width', '2px');
+            
+          // Debug the actual visual bounds after rotation
+          if (rotation === 90 || rotation === 270) {
+            console.log('[SHELVING VISUAL BOUNDS]', {
+              equipment_id: equipment.equipment_id,
+              rectDimensions: { width: rectWidth, height: rectHeight },
+              rectPosition: { x: -rectWidth/2, y: -rectHeight/2 },
+              rotation: rotation,
+              centerPosition: { x: equipment.x, y: equipment.y },
+              NOTE: "SVG rotation transforms the rect, so visual bounds after rotation are different",
+              rectPixelDimensions: { 
+                widthPx: rectWidth, 
+                heightPx: rectHeight,
+                widthFt: widthFt,
+                heightFt: heightFt
+              },
+              scaleFactors: {
+                xScale: `${rectWidth}px for ${widthFt}ft`,
+                yScale: `${rectHeight}px for ${heightFt}ft`
+              }
+            });
+          }
           
           // Draw shelf lines based on shelf_count
           const shelfCount = equipment.config?.shelf_count || 4;
@@ -535,14 +660,142 @@ export const SimpleFacilityFloorPlan: React.FC<SimpleFacilityFloorPlanProps> = (
               .style('stroke-width', '1px');
           }
           
+          // Add debug visualization for shelving boundaries
+          if (equipment.type === 'shelving' && showDebugBoundaries) {
+            const rotation = equipment.config?.rotation || 0;
+            const widthFt = equipment.config?.width || 40;
+            const heightFt = equipment.config?.height || 20;
+            
+            // Log actual dimensions being used
+            console.log('[SHELVING DIMENSIONS CHECK - RENDER TIME]', {
+              equipment_id: equipment.equipment_id,
+              storedDims: { width: equipment.config?.width, height: equipment.config?.height },
+              rotation: rotation,
+              visualAppearance: {
+                at0or180: { width: widthFt, height: heightFt },
+                at90or270: { width: heightFt, height: widthFt }
+              },
+              boundingBoxUsed: { halfWidth: boundingHalfWidth, halfHeight: boundingHalfHeight },
+              CORE_ISSUE: "Bounding box correctly swaps, but visual expectation is different"
+            });
+            
+            console.log('[SHELVING RENDER] Debug boundaries for:', equipment.equipment_id, {
+              position: { x: equipment.x, y: equipment.y },
+              dimensions: { width: widthFt, height: heightFt },
+              rotation: rotation,
+              edges: {
+                left: equipment.x - boundingHalfWidth,
+                right: equipment.x + boundingHalfWidth,
+                top: equipment.y - boundingHalfHeight,
+                bottom: equipment.y + boundingHalfHeight
+              },
+              visualCheck: {
+                isFlushRight: Math.abs((equipment.x + boundingHalfWidth) - facilityWidth) < 0.01,
+                isFlushLeft: Math.abs((equipment.x - boundingHalfWidth)) < 0.01,
+                isFlushTop: Math.abs((equipment.y - boundingHalfHeight)) < 0.01,
+                isFlushBottom: Math.abs((equipment.y + boundingHalfHeight) - facilityHeight) < 0.01
+              }
+            });
+            
+            // Calculate the actual bounding box of the rotated rectangle
+            const halfWidth = widthFt / 2;
+            const halfHeight = heightFt / 2;
+            
+            // For a rotated rectangle, the bounding box size depends on the rotation angle
+            const angleRad = (rotation * Math.PI) / 180;
+            const absCos = Math.abs(Math.cos(angleRad));
+            const absSin = Math.abs(Math.sin(angleRad));
+            
+            // Calculate the half-extents of the axis-aligned bounding box
+            const boundingHalfWidth = halfWidth * absCos + halfHeight * absSin;
+            const boundingHalfHeight = halfWidth * absSin + halfHeight * absCos;
+            
+            // Calculate boundary box in facility coordinates
+            const minX = equipment.x - boundingHalfWidth;
+            const maxX = equipment.x + boundingHalfWidth;
+            const minY = equipment.y - boundingHalfHeight;
+            const maxY = equipment.y + boundingHalfHeight;
+            
+            // Add boundary visualization to debug group
+            const boundaryGroup = debugGroup.append('g')
+              .attr('class', `debug-boundary-${equipment.equipment_id}`);
+            
+            // Draw the actual rotated shelving boundary (what the drag logic sees)
+            const debugShelving = boundaryGroup.append('g')
+              .attr('transform', `translate(${scaleX(equipment.x)}, ${scaleY(equipment.y)}) rotate(${rotation})`);
+            
+            debugShelving.append('rect')
+              .attr('x', -scaleX(widthFt/2) + scaleX(0))
+              .attr('y', -scaleY(heightFt/2) + scaleY(0))
+              .attr('width', scaleX(widthFt) - scaleX(0))
+              .attr('height', scaleY(heightFt) - scaleY(0))
+              .style('fill', 'none')
+              .style('stroke', '#00FF00')
+              .style('stroke-width', '2px')
+              .style('stroke-dasharray', '5,5');
+            
+            // Also draw the effective boundary after rotation (what collision detection uses)
+            boundaryGroup.append('rect')
+              .attr('x', scaleX(minX))
+              .attr('y', scaleY(minY))
+              .attr('width', scaleX(maxX) - scaleX(minX))
+              .attr('height', scaleY(maxY) - scaleY(minY))
+              .style('fill', 'none')
+              .style('stroke', '#FF0000')
+              .style('stroke-width', '2px')
+              .style('stroke-dasharray', '5,5');
+            
+            // Add debug text
+            boundaryGroup.append('text')
+              .attr('x', scaleX(equipment.x))
+              .attr('y', scaleY(minY) - 10)
+              .attr('text-anchor', 'middle')
+              .style('font-size', '10px')
+              .style('fill', '#FF0000')
+              .style('font-weight', 'bold')
+              .text(`${equipment.label} R:${rotation}° ${widthFt.toFixed(0)}x${heightFt.toFixed(0)} → BB:${(boundingHalfWidth*2).toFixed(0)}x${(boundingHalfHeight*2).toFixed(0)}`);
+            
+            // Add legend
+            const legendY = scaleY(0) + 20;
+            boundaryGroup.append('text')
+              .attr('x', scaleX(facilityWidth) - 100)
+              .attr('y', legendY)
+              .style('font-size', '10px')
+              .style('fill', '#00FF00')
+              .text('Green: Actual shape');
+            
+            boundaryGroup.append('text')
+              .attr('x', scaleX(facilityWidth) - 100)
+              .attr('y', legendY + 15)
+              .style('font-size', '10px')
+              .style('fill', '#FF0000')
+              .text('Red: Collision boundary');
+            
+            // Show boundary violations
+            if (minX < 0 || maxX > facilityWidth || minY < 0 || maxY > facilityHeight) {
+              boundaryGroup.append('text')
+                .attr('x', scaleX(equipment.x))
+                .attr('y', scaleY(maxY) + 15)
+                .attr('text-anchor', 'middle')
+                .style('font-size', '10px')
+                .style('fill', '#FF0000')
+                .style('font-weight', 'bold')
+                .text(`BOUNDS: X[${minX.toFixed(1)},${maxX.toFixed(1)}] Y[${minY.toFixed(1)},${maxY.toFixed(1)}]`);
+            }
+          }
+          
           // Add small circles at corners to indicate it's resizable when selected
           if (isSelected && equipment.type === 'shelving') {
             const handleSize = 5;
             const handlePositions = [
-              { x: -rectWidth / 2, y: -rectHeight / 2 }, // Top-left
-              { x: rectWidth / 2, y: -rectHeight / 2 },  // Top-right
-              { x: -rectWidth / 2, y: rectHeight / 2 },  // Bottom-left
-              { x: rectWidth / 2, y: rectHeight / 2 }    // Bottom-right
+              { x: -rectWidth / 2, y: -rectHeight / 2 }, // 0: Top-left corner
+              { x: rectWidth / 2, y: -rectHeight / 2 },  // 1: Top-right corner
+              { x: -rectWidth / 2, y: rectHeight / 2 },  // 2: Bottom-left corner
+              { x: rectWidth / 2, y: rectHeight / 2 },   // 3: Bottom-right corner
+              { x: 0, y: -rectHeight / 2 },              // 4: Top edge middle
+              { x: rectWidth / 2, y: 0 },                // 5: Right edge middle
+              { x: 0, y: rectHeight / 2 },               // 6: Bottom edge middle
+              { x: -rectWidth / 2, y: 0 }                // 7: Left edge middle
             ];
             
             // Add rotation handle at the top
@@ -618,7 +871,33 @@ export const SimpleFacilityFloorPlan: React.FC<SimpleFacilityFloorPlanProps> = (
                 .style('fill', '#10B981')
                 .style('stroke', '#065F46')
                 .style('stroke-width', '1px')
-                .style('cursor', index === 0 || index === 3 ? 'nwse-resize' : 'nesw-resize')
+                .style('cursor', () => {
+                  const rotation = equipment.config?.rotation || 0;
+                  
+                  // Adjust cursor based on rotation
+                  if (rotation === 0) {
+                    if (index === 0 || index === 3) return 'nwse-resize';
+                    if (index === 1 || index === 2) return 'nesw-resize';
+                    if (index === 4 || index === 6) return 'ns-resize'; // Top/bottom
+                    if (index === 5 || index === 7) return 'ew-resize'; // Left/right
+                  } else if (rotation === 90) {
+                    if (index === 0 || index === 3) return 'nesw-resize';
+                    if (index === 1 || index === 2) return 'nwse-resize';
+                    if (index === 4 || index === 6) return 'ew-resize'; // Top/bottom
+                    if (index === 5 || index === 7) return 'ns-resize'; // Left/right
+                  } else if (rotation === 180) {
+                    if (index === 0 || index === 3) return 'nwse-resize';
+                    if (index === 1 || index === 2) return 'nesw-resize';
+                    if (index === 4 || index === 6) return 'ns-resize'; // Top/bottom
+                    if (index === 5 || index === 7) return 'ew-resize'; // Left/right
+                  } else if (rotation === 270) {
+                    if (index === 0 || index === 3) return 'nesw-resize';
+                    if (index === 1 || index === 2) return 'nwse-resize';
+                    if (index === 4 || index === 6) return 'ew-resize'; // Top/bottom
+                    if (index === 5 || index === 7) return 'ns-resize'; // Left/right
+                  }
+                  return 'pointer';
+                })
                 .style('pointer-events', 'all');
               
               // Add resize behavior to handles
@@ -629,6 +908,8 @@ export const SimpleFacilityFloorPlan: React.FC<SimpleFacilityFloorPlanProps> = (
                 // Capture initial values locally to avoid closure issues
                 const startWidth = equipment.config?.width || 40;
                 const startHeight = equipment.config?.height || 20;
+                const startX = equipment.x;
+                const startY = equipment.y;
                 const [startMouseX, startMouseY] = d3.pointer(event, svg.node());
                 
                 // Start resize mode
@@ -642,38 +923,92 @@ export const SimpleFacilityFloorPlan: React.FC<SimpleFacilityFloorPlanProps> = (
                   const deltaX = scaleX.invert(currentX) - scaleX.invert(startMouseX);
                   const deltaY = scaleY.invert(currentY) - scaleY.invert(startMouseY);
                   
+                  // Account for rotation - transform deltas to local space
+                  const rotation = currentEquipment.config?.rotation || 0;
+                  const angleRad = (rotation * Math.PI) / 180;
+                  const cos = Math.cos(angleRad);
+                  const sin = Math.sin(angleRad);
+                  
+                  // Transform mouse delta to local coordinates
+                  const localDeltaX = deltaX * cos + deltaY * sin;
+                  const localDeltaY = -deltaX * sin + deltaY * cos;
+                  
                   let newWidth = startWidth;
                   let newHeight = startHeight;
+                  let newX = startX;
+                  let newY = startY;
                   
-                  // Update dimensions based on which handle is being dragged
+                  // Update dimensions and position based on which handle is being dragged
+                  // Use local deltas for correct behavior with rotation
                   switch (index) {
-                    case 0: // Top-left
-                      newWidth = Math.max(10, startWidth - deltaX * 2);
-                      newHeight = Math.max(10, startHeight - deltaY * 2);
+                    case 0: // Top-left - moves position and changes size
+                      newWidth = Math.max(1, startWidth - localDeltaX);
+                      newHeight = Math.max(1, startHeight - localDeltaY);
+                      // Move position in world space
+                      newX = startX + deltaX / 2;
+                      newY = startY + deltaY / 2;
                       break;
-                    case 1: // Top-right
-                      newWidth = Math.max(10, startWidth + deltaX * 2);
-                      newHeight = Math.max(10, startHeight - deltaY * 2);
+                    case 1: // Top-right - only moves Y position
+                      newWidth = Math.max(1, startWidth + localDeltaX);
+                      newHeight = Math.max(1, startHeight - localDeltaY);
+                      // Move position in world space
+                      newX = startX + deltaX / 2;
+                      newY = startY + deltaY / 2;
                       break;
-                    case 2: // Bottom-left
-                      newWidth = Math.max(10, startWidth - deltaX * 2);
-                      newHeight = Math.max(10, startHeight + deltaY * 2);
+                    case 2: // Bottom-left - only moves X position
+                      newWidth = Math.max(1, startWidth - localDeltaX);
+                      newHeight = Math.max(1, startHeight + localDeltaY);
+                      // Move position in world space
+                      newX = startX + deltaX / 2;
+                      newY = startY + deltaY / 2;
                       break;
-                    case 3: // Bottom-right
-                      newWidth = Math.max(10, startWidth + deltaX * 2);
-                      newHeight = Math.max(10, startHeight + deltaY * 2);
+                    case 3: // Bottom-right - no position change
+                      newWidth = Math.max(1, startWidth + localDeltaX);
+                      newHeight = Math.max(1, startHeight + localDeltaY);
+                      // Move position in world space
+                      newX = startX + deltaX / 2;
+                      newY = startY + deltaY / 2;
+                      break;
+                    case 4: // Top edge (middle)
+                      newHeight = Math.max(1, startHeight - localDeltaY);
+                      newY = startY + deltaY / 2;
+                      break;
+                    case 5: // Right edge (middle)
+                      newWidth = Math.max(1, startWidth + localDeltaX);
+                      newX = startX + deltaX / 2;
+                      break;
+                    case 6: // Bottom edge (middle)
+                      newHeight = Math.max(1, startHeight + localDeltaY);
+                      newY = startY + deltaY / 2;
+                      break;
+                    case 7: // Left edge (middle)
+                      newWidth = Math.max(1, startWidth - localDeltaX);
+                      newX = startX + deltaX / 2;
                       break;
                   }
                   
-                  // Snap to grid
-                  newWidth = snapToGrid(newWidth);
-                  newHeight = snapToGrid(newHeight);
+                  // Snap dimensions to grid
+                  newWidth = Math.round(newWidth);
+                  newHeight = Math.round(newHeight);
                   
-                  // Update equipment dimensions
+                  // Calculate effective dimensions for bounds checking
+                  const isRotated90or270 = rotation === 90 || rotation === 270;
+                  const effectiveWidth = isRotated90or270 ? newHeight : newWidth;
+                  const effectiveHeight = isRotated90or270 ? newWidth : newHeight;
+                  
+                  // Ensure within facility bounds
+                  const halfEffectiveWidth = effectiveWidth / 2;
+                  const halfEffectiveHeight = effectiveHeight / 2;
+                  if (newX - halfEffectiveWidth < 0 || newX + halfEffectiveWidth > facilityWidth ||
+                      newY - halfEffectiveHeight < 0 || newY + halfEffectiveHeight > facilityHeight) {
+                    return; // Don't update if it would go out of bounds
+                  }
+                  
+                  // Update equipment dimensions and position
                   if (onEquipmentUpdate) {
                     const updatedEquipment = facilityData.equipment.map(eq =>
                       eq.equipment_id === currentEquipment.equipment_id
-                        ? { ...eq, config: { ...eq.config, width: newWidth, height: newHeight } }
+                        ? { ...eq, x: newX, y: newY, config: { ...eq.config, width: newWidth, height: newHeight } }
                         : eq
                     );
                     onEquipmentUpdate(updatedEquipment);
@@ -744,12 +1079,22 @@ export const SimpleFacilityFloorPlan: React.FC<SimpleFacilityFloorPlanProps> = (
       const isRotated90or270 = equipmentRotation === 90 || equipmentRotation === 270;
       
       // Get dimensions based on rotation
-      const effectiveWidth = isRotated90or270 
-        ? (equipment.type === 'shelving' ? (equipment.config?.height || 20) : style.size)
-        : (equipment.type === 'shelving' ? (equipment.config?.width || 40) : style.size);
-      const effectiveHeight = isRotated90or270
-        ? (equipment.type === 'shelving' ? (equipment.config?.width || 40) : style.size)
-        : (equipment.type === 'shelving' ? (equipment.config?.height || 20) : style.size);
+      let effectiveWidth, effectiveHeight;
+      
+      if (equipment.type === 'shelving') {
+        // For shelving, use scaled dimensions
+        const widthFt = equipment.config?.width || 40;
+        const heightFt = equipment.config?.height || 20;
+        const scaledWidth = scaleX(widthFt) - scaleX(0);
+        const scaledHeight = scaleY(heightFt) - scaleY(0);
+        
+        effectiveWidth = isRotated90or270 ? scaledHeight : scaledWidth;
+        effectiveHeight = isRotated90or270 ? scaledWidth : scaledHeight;
+      } else {
+        // For other equipment, use the default size
+        effectiveWidth = style.size;
+        effectiveHeight = style.size;
+      }
       
       // Increase label spacing for better selection
       const labelPadding = 20; // Increased from 5-15 to 20px
@@ -1027,6 +1372,7 @@ export const SimpleFacilityFloorPlan: React.FC<SimpleFacilityFloorPlanProps> = (
                 const itemsToRemoveFromSelection: string[] = [];
                 
                 localSelectedIds.forEach(eqId => {
+                  // Get fresh equipment data to ensure we have latest dimensions
                   const eq = facilityData.equipment.find(e => e.equipment_id === eqId);
                   const startPos = localMultiDragStartPositions.get(eqId);
                   if (eq && startPos) {
@@ -1039,12 +1385,122 @@ export const SimpleFacilityFloorPlan: React.FC<SimpleFacilityFloorPlanProps> = (
                       newX = snapped.x;
                       newY = snapped.y;
                     } else {
-                      newX = snapToGrid(newX);
-                      newY = snapToGrid(newY);
+                      // For shelving, add edge snapping
+                      if (eq.type === 'shelving' && eq.config) {
+                        const widthFt = eq.config.width || 40;
+                        const heightFt = eq.config.height || 20;
+                        const rotation = eq.config.rotation || 0;
+                        
+                        console.log('[SHELVING DRAG] Multi-select drag:', eq.equipment_id, {
+                          currentPos: { x: eq.x, y: eq.y },
+                          newPos: { x: newX, y: newY },
+                          dimensions: { width: widthFt, height: heightFt },
+                          rotation: rotation
+                        });
+                        
+                        // Calculate the actual bounding box of the rotated rectangle
+                        const halfWidth = widthFt / 2;
+                        const halfHeight = heightFt / 2;
+                        
+                        // For edge snapping, we need the bounding box dimensions
+                        const angleRad = (rotation * Math.PI) / 180;
+                        const absCos = Math.abs(Math.cos(angleRad));
+                        const absSin = Math.abs(Math.sin(angleRad));
+                        
+                        const boundingHalfWidth = halfWidth * absCos + halfHeight * absSin;
+                        const boundingHalfHeight = halfWidth * absSin + halfHeight * absCos;
+                        
+                        // Snap to grid first
+                        newX = snapToGrid(newX);
+                        newY = snapToGrid(newY);
+                        
+                        // Edge snapping for flush positioning
+                        const edgeSnapThreshold = 0.5;
+                        
+                        if (Math.abs(newX - boundingHalfWidth) < edgeSnapThreshold) {
+                          newX = boundingHalfWidth;
+                        }
+                        if (Math.abs(newX - (facilityWidth - boundingHalfWidth)) < edgeSnapThreshold) {
+                          newX = facilityWidth - boundingHalfWidth;
+                        }
+                        if (Math.abs(newY - boundingHalfHeight) < edgeSnapThreshold) {
+                          newY = boundingHalfHeight;
+                        }
+                        if (Math.abs(newY - (facilityHeight - boundingHalfHeight)) < edgeSnapThreshold) {
+                          newY = facilityHeight - boundingHalfHeight;
+                        }
+                      } else {
+                        newX = snapToGrid(newX);
+                        newY = snapToGrid(newY);
+                      }
                     }
                     
-                    // Check if within bounds
-                    const canMove = newX >= 0 && newX <= facilityWidth && newY >= 0 && newY <= facilityHeight;
+                    // Check if within bounds (accounting for current dimensions AND rotation)
+                    let canMove = true;
+                    if (eq.type === 'shelving' && eq.config) {
+                      const widthFt = eq.config.width || 40;
+                      const heightFt = eq.config.height || 20;
+                      const rotation = eq.config.rotation || 0;
+                      
+                      console.log('[SHELVING BOUNDS CHECK] Multi-select bounds check:', eq.equipment_id);
+                      
+                      // Calculate the actual bounding box of the rotated rectangle
+                      const halfWidth = widthFt / 2;
+                      const halfHeight = heightFt / 2;
+                      
+                      // For a rotated rectangle, the bounding box size depends on the rotation angle
+                      const angleRad = (rotation * Math.PI) / 180;
+                      const absCos = Math.abs(Math.cos(angleRad));
+                      const absSin = Math.abs(Math.sin(angleRad));
+                      
+                      // Calculate the half-extents of the axis-aligned bounding box
+                      const boundingHalfWidth = halfWidth * absCos + halfHeight * absSin;
+                      const boundingHalfHeight = halfWidth * absSin + halfHeight * absCos;
+                      
+                      console.log('[SHELVING BOUNDS CHECK] Calculated bounds:', {
+                        boundingBox: { halfWidth: boundingHalfWidth, halfHeight: boundingHalfHeight },
+                        bounds: {
+                          left: newX - boundingHalfWidth,
+                          right: newX + boundingHalfWidth,
+                          top: newY - boundingHalfHeight,
+                          bottom: newY + boundingHalfHeight
+                        },
+                        facility: { width: facilityWidth, height: facilityHeight },
+                        rotation: rotation,
+                        trigValues: { absCos, absSin }
+                      });
+                      
+                      canMove = newX - boundingHalfWidth >= 0 && newX + boundingHalfWidth <= facilityWidth && 
+                                newY - boundingHalfHeight >= 0 && newY + boundingHalfHeight <= facilityHeight;
+                      
+                      if (!canMove) {
+                        console.log('[SHELVING BOUNDS CHECK] BLOCKED - Out of bounds!', {
+                          violations: {
+                            leftEdge: newX - boundingHalfWidth < 0 ? `${(newX - boundingHalfWidth).toFixed(2)} < 0` : 'OK',
+                            rightEdge: newX + boundingHalfWidth > facilityWidth ? `${(newX + boundingHalfWidth).toFixed(2)} > ${facilityWidth}` : 'OK',
+                            topEdge: newY - boundingHalfHeight < 0 ? `${(newY - boundingHalfHeight).toFixed(2)} < 0` : 'OK',
+                            bottomEdge: newY + boundingHalfHeight > facilityHeight ? `${(newY + boundingHalfHeight).toFixed(2)} > ${facilityHeight}` : 'OK'
+                          }
+                        });
+                      }
+                      
+                      // Debug logging for 0-degree rotation in multi-select
+                      if (Math.abs(rotation) < 0.01 && !canMove && newX + boundingHalfWidth > facilityWidth) {
+                        console.log('[SHELVING 0° MULTI-SELECT BOUNDS DEBUG]', {
+                          equipment: eq.equipment_id,
+                          dimensions: { width: widthFt, height: heightFt },
+                          rotation: rotation,
+                          boundingHalfWidth: boundingHalfWidth,
+                          facilityWidth: facilityWidth,
+                          maxAllowedX: facilityWidth - boundingHalfWidth,
+                          attemptedX: newX,
+                          rightEdgePosition: newX + boundingHalfWidth,
+                          overshoot: (newX + boundingHalfWidth) - facilityWidth
+                        });
+                      }
+                    } else {
+                      canMove = newX >= 0 && newX <= facilityWidth && newY >= 0 && newY <= facilityHeight;
+                    }
                     
                     if (!canMove) {
                       // This item hit a wall - remove it from selection
@@ -1085,13 +1541,393 @@ export const SimpleFacilityFloorPlan: React.FC<SimpleFacilityFloorPlanProps> = (
                   newX = snapped.x;
                   newY = snapped.y;
                 } else {
-                  newX = snapToGrid(newX);
-                  newY = snapToGrid(newY);
+                  // For shelving, snap to grid but also check for edge snapping
+                  if (currentEquipment.type === 'shelving') {
+                    // Get fresh equipment data to ensure we have latest rotation
+                    const freshEquipment = facilityData.equipment.find(eq => eq.equipment_id === currentEquipment.equipment_id);
+                    const widthFt = freshEquipment?.config?.width || currentEquipment.config?.width || 40;
+                    const heightFt = freshEquipment?.config?.height || currentEquipment.config?.height || 20;
+                    const rotation = freshEquipment?.config?.rotation || currentEquipment.config?.rotation || 0;
+                    
+                    // Debug logging for dimension source
+                    if (Math.abs(rotation) < 0.01 && !hasDraggedRef.current) {
+                      console.log('[SHELVING 0° DRAG START DEBUG]', {
+                        equipment: currentEquipment.equipment_id,
+                        freshConfigWidth: freshEquipment?.config?.width,
+                        currentConfigWidth: currentEquipment.config?.width,
+                        finalWidth: widthFt,
+                        freshConfigHeight: freshEquipment?.config?.height,
+                        currentConfigHeight: currentEquipment.config?.height,
+                        finalHeight: heightFt,
+                        rotation: rotation,
+                        facilityWidth: facilityWidth
+                      });
+                    }
+                    
+                    // Log the source of rotation value
+                    if (currentEquipment.type === 'shelving') {
+                      console.log('[SHELVING ROTATION SOURCE]', {
+                        equipment: currentEquipment.equipment_id,
+                        freshRotation: freshEquipment?.config?.rotation,
+                        currentRotation: currentEquipment.config?.rotation,
+                        finalRotation: rotation,
+                        freshEquipmentExists: !!freshEquipment
+                      });
+                      
+                      // Also log dimensions at drag start
+                      console.log('[SHELVING DRAG START DIMENSIONS]', {
+                        equipment: currentEquipment.equipment_id,
+                        configDimensions: {
+                          width: currentEquipment.config?.width,
+                          height: currentEquipment.config?.height
+                        },
+                        freshDimensions: {
+                          width: freshEquipment?.config?.width,
+                          height: freshEquipment?.config?.height
+                        },
+                        usedDimensions: {
+                          width: widthFt,
+                          height: heightFt
+                        },
+                        position: { x: currentEquipment.x, y: currentEquipment.y }
+                      });
+                    }
+                    
+                    // Removed drag logging to focus on rotation issue
+                    
+                    // Calculate the actual bounding box of the rotated rectangle
+                    const halfWidth = widthFt / 2;
+                    const halfHeight = heightFt / 2;
+                    
+                    // For edge snapping, we need the bounding box dimensions
+                    const angleRad = (rotation * Math.PI) / 180;
+                    const absCos = Math.abs(Math.cos(angleRad));
+                    const absSin = Math.abs(Math.sin(angleRad));
+                    
+                    // This correctly calculates the axis-aligned bounding box
+                    const boundingHalfWidth = halfWidth * absCos + halfHeight * absSin;
+                    const boundingHalfHeight = halfWidth * absSin + halfHeight * absCos;
+                    
+                    // CRITICAL DEBUG: Check if calculation matches expected values
+                    if (rotation === 270) {
+                      const expectedHalfWidth = heightFt / 2;  // At 270°, visual width is the stored height
+                      const expectedHalfHeight = widthFt / 2;  // At 270°, visual height is the stored width
+                      console.log('[SHELVING 270° CALCULATION CHECK]', {
+                        stored: { width: widthFt, height: heightFt },
+                        halfValues: { halfWidth, halfHeight },
+                        trig: { angleRad, cos: Math.cos(angleRad), sin: Math.sin(angleRad), absCos, absSin },
+                        calculation: {
+                          formula: 'boundingHalfWidth = halfWidth * absCos + halfHeight * absSin',
+                          values: `${halfWidth} * ${absCos} + ${halfHeight} * ${absSin}`,
+                          result: boundingHalfWidth
+                        },
+                        expected: { halfWidth: expectedHalfWidth, halfHeight: expectedHalfHeight },
+                        matches: Math.abs(boundingHalfWidth - expectedHalfWidth) < 0.01
+                      });
+                    }
+                    
+                    // Debug for 90 and 270 degree rotations - FOCUSED ON THE REAL ISSUE
+                    if (Math.abs(rotation - 90) < 0.01 || Math.abs(rotation - 270) < 0.01) {
+                      console.log(`[SHELVING ${rotation}° VISUAL VS LOGICAL]`, {
+                        equipment: currentEquipment.equipment_id,
+                        STORED_DIMENSIONS: { width: widthFt, height: heightFt },
+                        VISUAL_APPEARANCE: {
+                          description: `At ${rotation}°, a ${widthFt}x${heightFt} shelving APPEARS as ${heightFt}x${widthFt}`,
+                          visualWidth: heightFt,
+                          visualHeight: widthFt
+                        },
+                        BOUNDING_BOX_CALC: {
+                          formula: "halfWidth * |cos| + halfHeight * |sin|",
+                          calculation: `${widthFt/2} * ${absCos} + ${heightFt/2} * ${absSin}`,
+                          result: boundingHalfWidth,
+                          isCorrect: Math.abs(boundingHalfWidth - heightFt/2) < 0.01
+                        },
+                        CONSTRAINT: {
+                          maxCenterX: facilityWidth - boundingHalfWidth,
+                          rightEdgeWhenCentered: (facilityWidth - boundingHalfWidth) + boundingHalfWidth,
+                          shouldEqualFacilityWidth: true
+                        }
+                      });
+                    }
+                    
+                    // Snap to grid first
+                    newX = snapToGrid(newX);
+                    newY = snapToGrid(newY);
+                    
+                    // Then check if we're close to edges and snap to them for flush positioning
+                    const edgeSnapThreshold = 2; // Within 2 feet of edge for easier snapping
+                    
+                    // For shelving, we want to allow true flush positioning against walls
+                    // Calculate the actual edges of the shelving unit
+                    const leftEdge = newX - boundingHalfWidth;
+                    const rightEdge = newX + boundingHalfWidth;
+                    const topEdge = newY - boundingHalfHeight;
+                    const bottomEdge = newY + boundingHalfHeight;
+                    
+                    // Debug edge calculations for rotated shelving
+                    if (currentEquipment.type === 'shelving' && (rotation === 90 || rotation === 270)) {
+                      console.log(`[SHELVING ${rotation}° EDGE CALC]`, {
+                        equipment: currentEquipment.equipment_id,
+                        center: { x: newX, y: newY },
+                        boundingHalf: { width: boundingHalfWidth, height: boundingHalfHeight },
+                        edges: { left: leftEdge, right: rightEdge, top: topEdge, bottom: bottomEdge },
+                        facilityBounds: { width: facilityWidth, height: facilityHeight },
+                        distanceToRightWall: facilityWidth - rightEdge,
+                        wouldSnapRight: Math.abs(rightEdge - facilityWidth) < edgeSnapThreshold
+                      });
+                    }
+                    
+                    // Account for stroke widths in edge snapping
+                    // Match the visual boundary buffer for consistent visual containment
+                    const strokeAdjustment = visualBoundaryBuffer; // Use same buffer for edge snapping
+                    
+                    // Left wall - snap if left edge is close to 0
+                    if (leftEdge < edgeSnapThreshold && leftEdge > -edgeSnapThreshold) {
+                      newX = boundingHalfWidth + strokeAdjustment; // Slight inset for visual alignment
+                      console.log('[SHELVING EDGE SNAP] Snapped to left wall');
+                    }
+                    // Right wall - snap if right edge is close to facility width
+                    if (Math.abs(rightEdge - facilityWidth) < edgeSnapThreshold) {
+                      newX = facilityWidth - boundingHalfWidth - strokeAdjustment; // Slight inset for visual alignment
+                      console.log('[SHELVING EDGE SNAP] Snapped to right wall', {
+                        rightEdge: rightEdge,
+                        facilityWidth: facilityWidth,
+                        threshold: edgeSnapThreshold,
+                        newX: newX,
+                        boundingHalfWidth: boundingHalfWidth,
+                        rotation: rotation,
+                        strokeAdjustment: strokeAdjustment,
+                        visualNote: "Adjusted for stroke rendering to appear flush"
+                      });
+                    }
+                    // Top wall - snap if top edge is close to 0
+                    if (topEdge < edgeSnapThreshold && topEdge > -edgeSnapThreshold) {
+                      newY = boundingHalfHeight + strokeAdjustment; // Slight inset for visual alignment
+                      console.log('[SHELVING EDGE SNAP] Snapped to top wall');
+                    }
+                    // Bottom wall - snap if bottom edge is close to facility height
+                    if (Math.abs(bottomEdge - facilityHeight) < edgeSnapThreshold) {
+                      newY = facilityHeight - boundingHalfHeight - strokeAdjustment; // Slight inset for visual alignment
+                      console.log('[SHELVING EDGE SNAP] Snapped to bottom wall');
+                    }
+                    
+                    // Apply boundary clamping to prevent dragging outside facility
+                    const originalNewX = newX;
+                    const originalNewY = newY;
+                    const maxAllowedX = facilityWidth - boundingHalfWidth - visualBoundaryBuffer;
+                    const maxAllowedY = facilityHeight - boundingHalfHeight - visualBoundaryBuffer;
+                    const minAllowedX = boundingHalfWidth + visualBoundaryBuffer;
+                    const minAllowedY = boundingHalfHeight + visualBoundaryBuffer;
+                    
+                    // Check if position would cause visual overflow before clamping
+                    const wouldVisuallyOverflow = {
+                      top: newY - boundingHalfHeight < 0,
+                      bottom: newY + boundingHalfHeight > facilityHeight,
+                      left: newX - boundingHalfWidth < 0,
+                      right: newX + boundingHalfWidth > facilityWidth
+                    };
+                    
+                    if (Object.values(wouldVisuallyOverflow).some(v => v)) {
+                      console.log('[VISUAL OVERFLOW PREVENTED]', {
+                        equipment: currentEquipment.equipment_id,
+                        position: { x: newX, y: newY },
+                        bounds: {
+                          halfWidth: boundingHalfWidth,
+                          halfHeight: boundingHalfHeight
+                        },
+                        edges: {
+                          top: newY - boundingHalfHeight,
+                          bottom: newY + boundingHalfHeight,
+                          left: newX - boundingHalfWidth,
+                          right: newX + boundingHalfWidth
+                        },
+                        facility: { width: facilityWidth, height: facilityHeight },
+                        wouldOverflow: wouldVisuallyOverflow,
+                        visualBuffer: visualBoundaryBuffer
+                      });
+                    }
+                    
+                    // Clamp to ensure equipment stays within visual bounds
+                    newX = Math.max(minAllowedX, Math.min(maxAllowedX, newX));
+                    newY = Math.max(minAllowedY, Math.min(maxAllowedY, newY));
+                    
+                    // Special logging for 90/270 degree rotations to debug overflow
+                    if ((rotation === 90 || rotation === 270) && (originalNewX !== newX || originalNewY !== newY)) {
+                      console.log(`[SHELVING ${rotation}° CLAMPING ACTIVE]`, {
+                        equipment: currentEquipment.equipment_id,
+                        attempted: { x: originalNewX, y: originalNewY },
+                        clamped: { x: newX, y: newY },
+                        bounds: {
+                          x: { min: boundingHalfWidth, max: maxAllowedX },
+                          y: { min: boundingHalfHeight, max: maxAllowedY }
+                        },
+                        wouldOverflow: {
+                          top: originalNewY < boundingHalfHeight,
+                          bottom: originalNewY > maxAllowedY,
+                          left: originalNewX < boundingHalfWidth,
+                          right: originalNewX > maxAllowedX
+                        },
+                        DEBUG_VISUAL_VS_LOGICAL: {
+                          msg: "At 270°, shelving appears tall and narrow",
+                          visualWidth: heightFt,
+                          visualHeight: widthFt,
+                          centerX: newX,
+                          rightEdgeX: newX + boundingHalfWidth,
+                          spaceToRightWall: facilityWidth - (newX + boundingHalfWidth)
+                        }
+                      });
+                    }
+                    
+                    // Log when X-axis clamping happens
+                    if (originalNewX !== newX && currentEquipment.type === 'shelving') {
+                      console.log('[SHELVING X-AXIS CLAMPED DURING DRAG]', {
+                        equipment: currentEquipment.equipment_id,
+                        attemptedX: originalNewX,
+                        clampedX: newX,
+                        maxAllowedX: maxAllowedX,
+                        boundingHalfWidth: boundingHalfWidth,
+                        facilityWidth: facilityWidth,
+                        equipmentDimensions: { width: widthFt, height: heightFt },
+                        rotation: rotation,
+                        distanceFromRightEdge: facilityWidth - newX - boundingHalfWidth
+                      });
+                    }
+                    
+                    // Debug logging for 0-degree rotation
+                    if (Math.abs(rotation) < 0.01 && originalNewX !== newX) {
+                      console.log('[SHELVING 0° CLAMP DEBUG]', {
+                        equipment: currentEquipment.equipment_id,
+                        dimensions: { width: widthFt, height: heightFt },
+                        rotation: rotation,
+                        boundingHalfWidth: boundingHalfWidth,
+                        facilityWidth: facilityWidth,
+                        maxAllowedX: facilityWidth - boundingHalfWidth,
+                        attemptedX: originalNewX,
+                        clampedX: newX,
+                        distanceFromRightWall: facilityWidth - newX
+                      });
+                    }
+                  } else {
+                    newX = snapToGrid(newX);
+                    newY = snapToGrid(newY);
+                  }
                 }
                 
-                // Ensure within bounds
-                newX = Math.max(0, Math.min(facilityWidth, newX));
-                newY = Math.max(0, Math.min(facilityHeight, newY));
+                // Get fresh equipment data to ensure we have latest dimensions
+                const freshEquipmentData = facilityData.equipment.find(eq => eq.equipment_id === currentEquipment.equipment_id);
+                
+                // Removed drag comparison logging to focus on rotation issue
+                
+                // Ensure within bounds (accounting for shelving dimensions AND rotation)
+                if (freshEquipmentData && freshEquipmentData.type === 'shelving' && freshEquipmentData.config) {
+                  const widthFt = freshEquipmentData.config.width || 40;
+                  const heightFt = freshEquipmentData.config.height || 20;
+                  const rotation = freshEquipmentData.config.rotation || 0;
+                  
+                  console.log('[SHELVING DRAG END] Final position check:', {
+                    equipment: freshEquipmentData.equipment_id,
+                    proposedPos: { x: newX, y: newY },
+                    dimensions: { width: widthFt, height: heightFt },
+                    rotation: rotation
+                  });
+                  
+                  // Calculate the actual bounding box of the rotated rectangle
+                  const halfWidth = widthFt / 2;
+                  const halfHeight = heightFt / 2;
+                  
+                  // For a rotated rectangle, the bounding box size depends on the rotation angle
+                  const angleRad = (rotation * Math.PI) / 180;
+                  const absCos = Math.abs(Math.cos(angleRad));
+                  const absSin = Math.abs(Math.sin(angleRad));
+                  
+                  // Calculate the half-extents of the axis-aligned bounding box
+                  const boundingHalfWidth = halfWidth * absCos + halfHeight * absSin;
+                  const boundingHalfHeight = halfWidth * absSin + halfHeight * absCos;
+                  
+                  // Debug the calculation for 90/270 degree cases
+                  if (rotation === 90 || rotation === 270) {
+                    console.log('[SHELVING BOUNDS CHECK AT DRAG END]', {
+                      equipment: freshEquipmentData.equipment_id,
+                      rotation: rotation,
+                      originalDims: { width: widthFt, height: heightFt },
+                      halfDims: { halfWidth, halfHeight },
+                      trig: { absCos, absSin },
+                      boundingHalf: { width: boundingHalfWidth, height: boundingHalfHeight },
+                      position: { x: newX, y: newY },
+                      wouldOverflow: {
+                        top: newY - boundingHalfHeight < 0,
+                        bottom: newY + boundingHalfHeight > facilityHeight,
+                        left: newX - boundingHalfWidth < 0,
+                        right: newX + boundingHalfWidth > facilityWidth
+                      }
+                    });
+                  }
+                  
+                  // Add specific debug for 270 degree rotation case
+                  if (Math.abs(rotation - 270) < 0.01) {
+                    console.log('[SHELVING 270° DEBUG]', {
+                      originalDimensions: { width: widthFt, height: heightFt },
+                      halfDimensions: { halfWidth, halfHeight },
+                      rotation: rotation,
+                      angleRad: angleRad,
+                      trigValues: { 
+                        cos: Math.cos(angleRad), 
+                        sin: Math.sin(angleRad),
+                        absCos: absCos,
+                        absSin: absSin
+                      },
+                      calculation: {
+                        boundingHalfWidth_calc: `${halfWidth} * ${absCos} + ${halfHeight} * ${absSin} = ${boundingHalfWidth}`,
+                        boundingHalfHeight_calc: `${halfWidth} * ${absSin} + ${halfHeight} * ${absCos} = ${boundingHalfHeight}`
+                      },
+                      expectedBounding: {
+                        halfWidth: halfHeight, // Should be 10 for 270°
+                        halfHeight: halfWidth  // Should be 20 for 270°
+                      },
+                      actualBounding: {
+                        halfWidth: boundingHalfWidth,
+                        halfHeight: boundingHalfHeight
+                      },
+                      maxX: facilityWidth - boundingHalfWidth,
+                      currentX: newX
+                    });
+                  }
+                  
+                  const originalX = newX;
+                  const originalY = newY;
+                  
+                  // Allow flush positioning with visual boundary buffer
+                  const visualBuffer = visualBoundaryBuffer; // Match the buffer used during drag
+                  newX = Math.max(boundingHalfWidth + visualBuffer, Math.min(facilityWidth - boundingHalfWidth - visualBuffer, newX));
+                  newY = Math.max(boundingHalfHeight + visualBuffer, Math.min(facilityHeight - boundingHalfHeight - visualBuffer, newY));
+                  
+                  console.log('[SHELVING DRAG END] Bounds clamping:', {
+                    equipment: freshEquipmentData.equipment_id,
+                    rotation: rotation,
+                    dimensions: { width: widthFt, height: heightFt },
+                    halfDimensions: { halfWidth, halfHeight },
+                    trigonometry: { 
+                      angleRad: angleRad,
+                      angleDeg: rotation,
+                      cos: Math.cos(angleRad),
+                      sin: Math.sin(angleRad),
+                      absCos: absCos,
+                      absSin: absSin
+                    },
+                    boundingBox: { halfWidth: boundingHalfWidth, halfHeight: boundingHalfHeight },
+                    original: { x: originalX, y: originalY },
+                    clamped: { x: newX, y: newY },
+                    limits: {
+                      x: [boundingHalfWidth, facilityWidth - boundingHalfWidth],
+                      y: [boundingHalfHeight, facilityHeight - boundingHalfHeight]
+                    },
+                    facility: { width: facilityWidth, height: facilityHeight },
+                    wasClamped: { x: originalX !== newX, y: originalY !== newY }
+                  });
+                } else {
+                  newX = Math.max(0, Math.min(facilityWidth, newX));
+                  newY = Math.max(0, Math.min(facilityHeight, newY));
+                }
                 
                 // Update position
                 d3.select(equipGroup.node()).attr('transform', `translate(${scaleX(newX)}, ${scaleY(newY)})`);
@@ -1346,7 +2182,7 @@ export const SimpleFacilityFloorPlan: React.FC<SimpleFacilityFloorPlanProps> = (
       svg.on('mousemove.brush', null);
       svg.on('mouseup.brush', null);
     };
-  }, [selectedTool, isBrushSelecting, brushStart, brushEnd, facilityData, scaleX, scaleY, onFacilityRightClick, ghostDragEquipment]);
+  }, [selectedTool, isBrushSelecting, brushStart, brushEnd, facilityData, scaleX, scaleY, onFacilityRightClick, ghostDragEquipment, showDebugBoundaries]);
 
   // Separate effect for brush overlay - updates immediately
   useEffect(() => {

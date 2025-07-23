@@ -7,9 +7,10 @@ interface ScatterPlotProps {
   settings: VisualizationSettings;
   className?: string;
   onDataSelect?: (data: any[], position: { x: number; y: number }, title: string) => void;
+  dimensions?: any[];
 }
 
-export const ScatterPlot: React.FC<ScatterPlotProps> = ({ data, settings, className, onDataSelect }) => {
+export const ScatterPlot: React.FC<ScatterPlotProps> = ({ data, settings, className, onDataSelect, dimensions }) => {
   return (
     <BaseChart
       data={data}
@@ -17,6 +18,7 @@ export const ScatterPlot: React.FC<ScatterPlotProps> = ({ data, settings, classN
       settings={settings}
       className={className}
       onDataSelect={onDataSelect}
+      dimensions={dimensions}
     />
   );
 };

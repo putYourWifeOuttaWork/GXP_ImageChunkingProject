@@ -80,6 +80,11 @@ export interface WidgetConfiguration {
     autoRefresh: boolean;
     refreshInterval: number;
     filterOverrides?: any[];
+    isolationFilters?: Record<string, string[]>; // Widget-specific isolation filters
+    chartSettingsOverrides?: {
+      chartType?: string;
+      visualizationSettings?: any; // Chart-specific settings like colors, axis, etc.
+    };
   };
   
   // Text widget

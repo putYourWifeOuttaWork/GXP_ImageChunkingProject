@@ -7,9 +7,10 @@ interface HeatmapChartProps {
   settings: VisualizationSettings;
   className?: string;
   onDataSelect?: (data: any[], position: { x: number; y: number }, title: string) => void;
+  dimensions?: any[];
 }
 
-export const HeatmapChart: React.FC<HeatmapChartProps> = ({ data, settings, className, onDataSelect }) => {
+export const HeatmapChart: React.FC<HeatmapChartProps> = ({ data, settings, className, onDataSelect, dimensions }) => {
   return (
     <BaseChart
       data={data}
@@ -17,6 +18,7 @@ export const HeatmapChart: React.FC<HeatmapChartProps> = ({ data, settings, clas
       settings={settings}
       className={className}
       onDataSelect={onDataSelect}
+      dimensions={dimensions}
     />
   );
 };

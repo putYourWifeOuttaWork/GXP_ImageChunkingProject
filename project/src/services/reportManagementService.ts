@@ -497,6 +497,29 @@ export class ReportManagementService {
   }
 
   /**
+   * Get all reports (with optional search query)
+   */
+  static async getAllReports(query?: string): Promise<SavedReport[]> {
+    let queryBuilder = supabase
+      .from('saved_reports')
+      .select(`
+        *,
+        report_folders!left(folder_name, folder_path)
+      `)
+      .order('updated_at', { ascending: false })
+      .limit(100);
+
+    if (query) {
+      queryBuilder = queryBuilder.or(`report_name.ilike.%${query}%,description.ilike.%${query}%`);
+    }
+
+    const { data, error } = await queryBuilder;
+
+    if (error) throw error;
+    return data || [];
+  }
+
+  /**
    * Search reports
    */
   static async searchReports(query: string): Promise<SavedReport[]> {

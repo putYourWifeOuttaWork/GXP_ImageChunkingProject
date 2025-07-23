@@ -35,8 +35,13 @@ const CompanyManagementPage = lazy(() => import('./pages/CompanyManagementPage')
 const UserAuditPage = lazy(() => import('./pages/UserAuditPage'));
 const ReportBuilderPage = lazy(() => import('./pages/ReportBuilderPage'));
 const ReportsPage = lazy(() => import('./pages/ReportsPage'));
+const DashboardsPage = lazy(() => import('./pages/DashboardsPage'));
+const DashboardBuilderPage = lazy(() => import('./pages/DashboardBuilderPage'));
+const DashboardViewPage = lazy(() => import('./pages/DashboardViewPage'));
 const TestFacilityMapPage = lazy(() => import('./pages/TestFacilityMapPage'));
 const EnhancedFacilityMapPage = lazy(() => import('./pages/EnhancedFacilityMapPage'));
+const ModalFacilityMapPage = lazy(() => import('./pages/ModalFacilityMapPage'));
+const SimpleFacilityBuilder = lazy(() => import('./pages/SimpleFacilityBuilder'));
 
 function App() {
   const navigate = useNavigate();
@@ -418,6 +423,26 @@ function App() {
                   <ReportBuilderPage />
                 </Suspense>
               } />
+              <Route path="/dashboards" element={
+                <Suspense fallback={<LoadingScreen />}>
+                  <DashboardsPage />
+                </Suspense>
+              } />
+              <Route path="/dashboards/new" element={
+                <Suspense fallback={<LoadingScreen />}>
+                  <DashboardBuilderPage />
+                </Suspense>
+              } />
+              <Route path="/dashboards/:id" element={
+                <Suspense fallback={<LoadingScreen />}>
+                  <DashboardViewPage />
+                </Suspense>
+              } />
+              <Route path="/dashboards/:id/edit" element={
+                <Suspense fallback={<LoadingScreen />}>
+                  <DashboardBuilderPage />
+                </Suspense>
+              } />
               <Route path="/test-facility-map" element={
                 <Suspense fallback={<LoadingScreen />}>
                   <TestFacilityMapPage />
@@ -426,6 +451,16 @@ function App() {
               <Route path="/facility-map" element={
                 <Suspense fallback={<LoadingScreen />}>
                   <EnhancedFacilityMapPage />
+                </Suspense>
+              } />
+              <Route path="/facility-map-modal" element={
+                <Suspense fallback={<LoadingScreen />}>
+                  <ModalFacilityMapPage />
+                </Suspense>
+              } />
+              <Route path="/facility-builder" element={
+                <Suspense fallback={<LoadingScreen />}>
+                  <SimpleFacilityBuilder />
                 </Suspense>
               } />
             </Route>

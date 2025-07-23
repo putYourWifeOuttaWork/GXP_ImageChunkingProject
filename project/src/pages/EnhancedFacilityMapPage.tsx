@@ -41,7 +41,8 @@ const EnhancedFacilityMapPage: React.FC = () => {
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [sites, setSites] = useState<any[]>([]);
   const [selectedSiteId, setSelectedSiteId] = useState<string | null>(null);
-  const [day, setDay] = useState(5);
+  // const [day, setDay] = useState(5); // Removed - edit mode only
+  const [userData, setUserData] = useState<any>(null);
   
   const { getFacilityDetails, loading, error } = useFacilityMappingData();
 
@@ -64,6 +65,8 @@ const EnhancedFacilityMapPage: React.FC = () => {
       
       if (userError) {
         console.error('Error getting user company:', userError);
+      } else {
+        setUserData(userData);
       }
       console.log('User company ID:', userData?.company_id);
       
@@ -109,9 +112,177 @@ const EnhancedFacilityMapPage: React.FC = () => {
 
   const loadFacilityData = async (siteId: string) => {
     try {
-      const data = await getFacilityDetails(siteId);
-      setFacilityData(data);
-      addToHistory(data);
+      // First try to load from sites table directly
+      const { data: siteData, error: siteError } = await supabase
+        .from('sites')
+        .select('*')
+        .eq('site_id', siteId)
+        .single();
+
+      if (siteError) {
+        console.error('Error loading site:', siteError);
+        throw siteError;
+      }
+
+      console.log('Loaded site data:', siteData);
+
+      // Check if we have saved layout data
+      if (siteData.facility_layout && siteData.facility_layout.equipment) {
+        // Use saved layout
+        const facilityData: FacilityData = {
+          facility_info: {
+            site_id: siteData.site_id,
+            name: siteData.name,
+            dimensions: siteData.facility_dimensions || { width: 120, height: 80, units: 'feet' },
+            layout: siteData.facility_layout
+          },
+          equipment: siteData.facility_layout.equipment || [],
+          latest_contours: siteData.facility_layout.contours || [],
+          analytics: siteData.facility_layout.analytics || {
+            total_growth: 0,
+            effectiveness: 0,
+            critical_zones: 0
+          }
+        };
+        setFacilityData(facilityData);
+        addToHistory(facilityData);
+      } else {
+        // Check if we have petri_defaults or gasifier_defaults to parse
+        console.log('Site has petri_defaults:', siteData.petri_defaults);
+        console.log('Site has gasifier_defaults:', siteData.gasifier_defaults);
+        // No saved layout, create default based on site info
+        const dimensions = siteData.facility_dimensions || {
+          width: Math.min(Math.sqrt(siteData.square_footage || 10000) * 2, 300),
+          height: Math.min(Math.sqrt(siteData.square_footage || 10000) * 1.5, 200),
+          units: 'feet'
+        };
+
+        const defaultData: FacilityData = {
+          facility_info: {
+            site_id: siteData.site_id,
+            name: siteData.name,
+            dimensions,
+            layout: null
+          },
+          equipment: [],
+          latest_contours: [],
+          analytics: {
+            total_growth: 0,
+            effectiveness: 0,
+            critical_zones: 0
+          }
+        };
+
+        // Parse petri_defaults and gasifier_defaults to create equipment
+        const equipment: Equipment[] = [];
+        
+        // Parse petri_defaults - default to 0,0 if no position
+        if (siteData.petri_defaults && Array.isArray(siteData.petri_defaults)) {
+          siteData.petri_defaults.forEach((petri: any, index: number) => {
+            if (petri.petri_code) {
+              equipment.push({
+                equipment_id: petri.petri_code,
+                type: 'petri_dish',
+                label: petri.petri_code,
+                x: petri.x_position || 0,  // Default to 0
+                y: petri.y_position || 0,  // Default to 0
+                z: 0,
+                radius: 5,
+                status: 'active',
+                config: petri
+              });
+            }
+          });
+        }
+        
+        // Parse gasifier_defaults - use footage_from_origin if available
+        if (siteData.gasifier_defaults && Array.isArray(siteData.gasifier_defaults)) {
+          siteData.gasifier_defaults.forEach((gasifier: any, index: number) => {
+            if (gasifier.gasifier_code) {
+              equipment.push({
+                equipment_id: gasifier.gasifier_code,
+                type: 'gasifier',
+                label: gasifier.gasifier_code,
+                x: gasifier.footage_from_origin_x || gasifier.x_position || 0,  // Default to 0
+                y: gasifier.footage_from_origin_y || gasifier.y_position || 0,  // Default to 0
+                z: 0,
+                radius: gasifier.effectiveness_radius || 15,
+                status: 'active',
+                config: gasifier
+              });
+            }
+          });
+        }
+        
+        // Parse door_details if available
+        if (siteData.door_details && Array.isArray(siteData.door_details)) {
+          siteData.door_details.forEach((door: any) => {
+            if (door.door_id && door.position) {
+              equipment.push({
+                equipment_id: door.door_id,
+                type: 'door',
+                label: door.door_id,
+                x: door.position.x || 0,
+                y: door.position.y || 0,
+                z: 0,
+                radius: 0,
+                status: 'active',
+                config: door
+              });
+            }
+          });
+        }
+        
+        // Parse fan_details if available
+        if (siteData.fan_details && Array.isArray(siteData.fan_details)) {
+          siteData.fan_details.forEach((fan: any) => {
+            if (fan.fanId && fan.directionality && fan.directionality.origin_point) {
+              equipment.push({
+                equipment_id: fan.fanId,
+                type: 'fan',
+                label: fan.fanId,
+                x: fan.directionality.origin_point.x || 0,
+                y: fan.directionality.origin_point.y || 0,
+                z: 0,
+                radius: 8,
+                status: 'active',
+                config: fan
+              });
+            }
+          });
+        }
+        
+        defaultData.equipment = equipment;
+        
+        // Also try to load from facility_equipment table if no defaults found
+        if (equipment.length === 0) {
+          try {
+            const { data: equipmentData } = await supabase
+              .from('facility_equipment')
+              .select('*')
+              .eq('site_id', siteId);
+
+            if (equipmentData && equipmentData.length > 0) {
+              defaultData.equipment = equipmentData.map(eq => ({
+                equipment_id: eq.equipment_id,
+                type: eq.equipment_type,
+                label: eq.label,
+                x: eq.position_x,
+                y: eq.position_y,
+                z: eq.position_z || 0,
+                radius: eq.effectiveness_radius || 5,
+                status: eq.status || 'active',
+                config: eq.configuration || {}
+              }));
+            }
+          } catch (equipError) {
+            console.log('Could not load equipment from facility_equipment table');
+          }
+        }
+
+        setFacilityData(defaultData);
+        addToHistory(defaultData);
+      }
     } catch (err) {
       console.error('Error loading facility data:', err);
       // Use mock data if no real data
@@ -244,48 +415,85 @@ const EnhancedFacilityMapPage: React.FC = () => {
     if (!facilityData || !selectedSiteId) return;
 
     try {
-      // Save facility layout
-      const { error: layoutError } = await supabase
+      // First ensure the columns exist by running our migration
+      // In production, this would be run separately
+      console.log('Saving facility layout for site:', selectedSiteId);
+      
+      // Prepare the layout data (without circular references)
+      const layoutToSave = {
+        equipment: facilityData.equipment,
+        contours: facilityData.latest_contours,
+        analytics: facilityData.analytics,
+        lastModified: new Date().toISOString(),
+        version: '1.0'
+      };
+
+      // Update the sites table with layout and dimensions
+      const { data: siteData, error: layoutError } = await supabase
         .from('sites')
         .update({
-          facility_layout: facilityData,
+          facility_layout: layoutToSave,
           facility_dimensions: facilityData.facility_info.dimensions,
           updated_at: new Date().toISOString()
         })
-        .eq('site_id', selectedSiteId);
+        .eq('site_id', selectedSiteId)
+        .select();
 
-      if (layoutError) throw layoutError;
+      if (layoutError) {
+        console.error('Error updating site:', layoutError);
+        throw layoutError;
+      }
 
-      // Save equipment
-      const { error: deleteError } = await supabase
-        .from('facility_equipment')
-        .delete()
-        .eq('site_id', selectedSiteId);
+      console.log('Site updated:', siteData);
 
-      if (deleteError) throw deleteError;
+      // Save equipment to dedicated table if it exists
+      try {
+        // Check if facility_equipment table exists
+        const { error: checkError } = await supabase
+          .from('facility_equipment')
+          .select('equipment_id')
+          .limit(1);
 
-      const equipmentData = facilityData.equipment.map(eq => ({
-        site_id: selectedSiteId,
-        equipment_type: eq.type,
-        label: eq.label,
-        position_x: eq.x,
-        position_y: eq.y,
-        position_z: eq.z,
-        effectiveness_radius: eq.radius,
-        configuration: eq.config,
-        status: eq.status
-      }));
+        if (!checkError) {
+          // Table exists, proceed with equipment save
+          const { error: deleteError } = await supabase
+            .from('facility_equipment')
+            .delete()
+            .eq('site_id', selectedSiteId);
 
-      const { error: insertError } = await supabase
-        .from('facility_equipment')
-        .insert(equipmentData);
+          if (deleteError && deleteError.code !== 'PGRST116') {
+            console.error('Error deleting old equipment:', deleteError);
+          }
 
-      if (insertError) throw insertError;
+          const equipmentData = facilityData.equipment.map(eq => ({
+            site_id: selectedSiteId,
+            equipment_type: eq.type,
+            label: eq.label,
+            position_x: eq.x,
+            position_y: eq.y,
+            position_z: eq.z,
+            effectiveness_radius: eq.radius,
+            configuration: eq.config,
+            status: eq.status,
+            company_id: userData?.company_id
+          }));
+
+          const { error: insertError } = await supabase
+            .from('facility_equipment')
+            .insert(equipmentData);
+
+          if (insertError) {
+            console.error('Error inserting equipment:', insertError);
+          }
+        }
+      } catch (equipError) {
+        console.log('facility_equipment table may not exist, saving to sites table only');
+      }
 
       alert('Facility layout saved successfully!');
     } catch (err) {
       console.error('Error saving facility:', err);
-      alert('Error saving facility layout');
+      alert('Error saving facility layout. Check console for details.');
     }
   };
 
@@ -307,7 +515,7 @@ const EnhancedFacilityMapPage: React.FC = () => {
             <h1 className="text-2xl font-semibold text-gray-900">
               Facility + Items + Sensors + Interventions
             </h1>
-            <p className="text-lg text-gray-600 mt-1">Day {day}</p>
+            <p className="text-lg text-gray-600 mt-1">Edit Mode</p>
           </div>
           
           <div className="flex items-center gap-4">
@@ -327,13 +535,6 @@ const EnhancedFacilityMapPage: React.FC = () => {
               ))}
             </select>
             
-            <input
-              type="number"
-              value={day}
-              onChange={(e) => setDay(parseInt(e.target.value) || 1)}
-              className="w-20 px-3 py-2 border border-gray-300 rounded-md"
-              min="1"
-            />
           </div>
         </div>
       </div>
@@ -350,7 +551,7 @@ const EnhancedFacilityMapPage: React.FC = () => {
               selectedEquipment={selectedEquipment}
               width={1200}
               height={700}
-              day={day}
+              day={1}
             />
           )}
 
