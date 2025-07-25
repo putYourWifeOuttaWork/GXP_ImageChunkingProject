@@ -5,6 +5,7 @@ import { ChartType, VisualizationSettings } from '../../types/reporting';
 import Button from '../common/Button';
 import { supabase } from '../../lib/supabaseClient';
 import { IsolationFilterSelect } from './IsolationFilterSelect';
+import { ChartSettingsPanel } from '../reporting/builder/ChartSettingsPanel';
 
 interface WidgetConfigModalProps {
   isOpen: boolean;
@@ -541,62 +542,15 @@ export const WidgetConfigModal: React.FC<WidgetConfigModalProps> = ({
                 </select>
               </div>
 
-              {/* Chart-specific settings */}
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Color Scheme
-                  </label>
-                  <select
-                    value={visualizationSettings.colorScheme || 'default'}
-                    onChange={(e) => setVisualizationSettings({
-                      ...visualizationSettings,
-                      colorScheme: e.target.value
-                    })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                  >
-                    <option value="default">Default</option>
-                    <option value="blue">Blue</option>
-                    <option value="green">Green</option>
-                    <option value="purple">Purple</option>
-                    <option value="orange">Orange</option>
-                    <option value="red">Red</option>
-                  </select>
-                </div>
-
-                {['bar', 'line', 'area'].includes(chartType) && (
-                  <div className="flex items-center">
-                    <input
-                      type="checkbox"
-                      id="stacked"
-                      checked={visualizationSettings.stacked || false}
-                      onChange={(e) => setVisualizationSettings({
-                        ...visualizationSettings,
-                        stacked: e.target.checked
-                      })}
-                      className="mr-2"
-                    />
-                    <label htmlFor="stacked" className="text-sm">
-                      Stacked Chart
-                    </label>
-                  </div>
-                )}
-
-                <div className="flex items-center">
-                  <input
-                    type="checkbox"
-                    id="showLegend"
-                    checked={visualizationSettings.showLegend !== false}
-                    onChange={(e) => setVisualizationSettings({
-                      ...visualizationSettings,
-                      showLegend: e.target.checked
-                    })}
-                    className="mr-2"
-                  />
-                  <label htmlFor="showLegend" className="text-sm">
-                    Show Legend
-                  </label>
-                </div>
+              {/* Advanced Chart Settings */}
+              <div className="mt-4">
+                <ChartSettingsPanel
+                  visualizationSettings={visualizationSettings}
+                  onSettingsChange={(updates) => setVisualizationSettings({
+                    ...visualizationSettings,
+                    ...updates
+                  })}
+                />
               </div>
             </div>
           </div>

@@ -206,7 +206,7 @@ const initialState: ReportBuilderState = {
     colors: { scheme: 'categorical', palette: 'category10' },
     axes: { 
       x: { show: true, scale: 'linear', grid: { show: true } },
-      y: { show: true, scale: 'linear', grid: { show: true } }
+      y: { show: true, scale: 'linear', grid: { show: true }, autoScale: true }
     },
     legends: { show: true, position: 'top', orientation: 'horizontal', padding: 10, itemSpacing: 5, fontSize: 12, fontFamily: 'Arial', color: '#333', interactive: true },
     tooltips: { show: true },

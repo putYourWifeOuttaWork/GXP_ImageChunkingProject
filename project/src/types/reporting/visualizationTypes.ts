@@ -67,6 +67,8 @@ export interface AxisConfiguration {
   tickValues?: any[];
   tickFormat?: string;
   customScale?: boolean;
+  autoScale?: boolean;  // Auto-fit to data range
+  includeZero?: boolean; // Force inclusion of zero in scale
   minValue?: number;
   maxValue?: number;
   sort?: 'none' | 'asc' | 'desc' | 'value_asc' | 'value_desc';

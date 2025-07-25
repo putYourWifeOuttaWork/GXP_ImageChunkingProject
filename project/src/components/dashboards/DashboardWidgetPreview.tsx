@@ -19,6 +19,29 @@ import {
 } from 'lucide-react';
 import Button from '../common/Button';
 
+// Deep merge helper function
+function deepMerge(target: any, source: any): any {
+  const output = { ...target };
+  if (isObject(target) && isObject(source)) {
+    Object.keys(source).forEach(key => {
+      if (isObject(source[key])) {
+        if (!(key in target)) {
+          Object.assign(output, { [key]: source[key] });
+        } else {
+          output[key] = deepMerge(target[key], source[key]);
+        }
+      } else {
+        Object.assign(output, { [key]: source[key] });
+      }
+    });
+  }
+  return output;
+}
+
+function isObject(item: any): boolean {
+  return item && typeof item === 'object' && !Array.isArray(item);
+}
+
 interface DashboardWidgetPreviewProps {
   widget: DashboardWidget;
   isSelected: boolean;
@@ -69,7 +92,7 @@ export const DashboardWidgetPreview: React.FC<DashboardWidgetPreviewProps> = ({
       const isolationFilters = widget.configuration?.reportConfiguration?.isolationFilters || {};
       const chartOverrides = widget.configuration?.reportConfiguration?.chartSettingsOverrides || {};
 
-      // Merge configurations
+      // Merge configurations with deep merge for visualization settings
       const finalConfig = {
         ...baseConfig,
         isolationFilters: {
@@ -77,10 +100,10 @@ export const DashboardWidgetPreview: React.FC<DashboardWidgetPreviewProps> = ({
           ...isolationFilters
         },
         chartType: chartOverrides.chartType || baseConfig.chartType,
-        visualizationSettings: {
-          ...baseConfig.visualizationSettings,
-          ...(chartOverrides.visualizationSettings || {})
-        }
+        visualizationSettings: deepMerge(
+          baseConfig.visualizationSettings || {},
+          chartOverrides.visualizationSettings || {}
+        )
       };
 
       // Fetch data with merged configuration
@@ -181,12 +204,12 @@ export const DashboardWidgetPreview: React.FC<DashboardWidgetPreviewProps> = ({
       return <div className="text-gray-500 text-center">No data available</div>;
     }
 
-    // Apply widget-level chart overrides
+    // Apply widget-level chart overrides with deep merge
     const chartType = widget.configuration?.reportConfiguration?.chartSettingsOverrides?.chartType || reportConfig.chartType || 'bar';
-    const visualizationSettings = {
-      ...reportConfig.visualizationSettings,
-      ...(widget.configuration?.reportConfiguration?.chartSettingsOverrides?.visualizationSettings || {})
-    };
+    const visualizationSettings = deepMerge(
+      reportConfig.visualizationSettings || {},
+      widget.configuration?.reportConfiguration?.chartSettingsOverrides?.visualizationSettings || {}
+    );
 
     if (chartType === 'table') {
       return (

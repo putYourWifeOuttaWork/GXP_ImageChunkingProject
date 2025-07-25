@@ -237,23 +237,62 @@ export const ChartSettingsPanel: React.FC<ChartSettingsPanelProps> = ({
           {/* Y-Axis Scale */}
           <div>
             <h4 className="text-xs font-medium text-gray-700 mb-2">Y-Axis Scale</h4>
-            <label className="flex items-center mb-2">
-              <input
-                type="checkbox"
-                checked={visualizationSettings?.axes?.y?.customScale || false}
-                onChange={(e) => onSettingsChange({
-                  axes: {
-                    ...visualizationSettings?.axes,
-                    y: {
-                      ...visualizationSettings?.axes?.y,
-                      customScale: e.target.checked,
+            
+            <div className="space-y-2">
+              <label className="flex items-center">
+                <input
+                  type="checkbox"
+                  checked={visualizationSettings?.axes?.y?.autoScale !== false}
+                  onChange={(e) => onSettingsChange({
+                    axes: {
+                      ...visualizationSettings?.axes,
+                      y: {
+                        ...visualizationSettings?.axes?.y,
+                        autoScale: e.target.checked,
+                      }
                     }
-                  }
-                })}
-                className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 mr-2"
-              />
-              <span className="text-sm text-gray-700">Use Custom Scale</span>
-            </label>
+                  })}
+                  className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 mr-2"
+                />
+                <span className="text-sm text-gray-700">Auto-fit to Data Range</span>
+              </label>
+
+              <label className="flex items-center ml-6">
+                <input
+                  type="checkbox"
+                  checked={visualizationSettings?.axes?.y?.includeZero || false}
+                  onChange={(e) => onSettingsChange({
+                    axes: {
+                      ...visualizationSettings?.axes,
+                      y: {
+                        ...visualizationSettings?.axes?.y,
+                        includeZero: e.target.checked,
+                      }
+                    }
+                  })}
+                  className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 mr-2"
+                />
+                <span className="text-sm text-gray-700">Always Include Zero</span>
+              </label>
+
+              <label className="flex items-center">
+                <input
+                  type="checkbox"
+                  checked={visualizationSettings?.axes?.y?.customScale || false}
+                  onChange={(e) => onSettingsChange({
+                    axes: {
+                      ...visualizationSettings?.axes,
+                      y: {
+                        ...visualizationSettings?.axes?.y,
+                        customScale: e.target.checked,
+                      }
+                    }
+                  })}
+                  className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 mr-2"
+                />
+                <span className="text-sm text-gray-700">Use Custom Scale</span>
+              </label>
+            </div>
 
             {visualizationSettings?.axes?.y?.customScale && (
               <div className="space-y-2 ml-6">

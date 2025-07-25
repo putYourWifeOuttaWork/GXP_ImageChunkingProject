@@ -391,13 +391,26 @@ const METRIC_FIXED_RANGES: Record<string, { min: number; max: number; label?: st
 };
 
 // Smart Y-axis scaling for multiple series
-function calculateYDomain(seriesData: SeriesData[], visibleOnly: boolean = true, measureName?: string, customMin?: number, customMax?: number): [number, number] {
+function calculateYDomain(
+  seriesData: SeriesData[], 
+  visibleOnly: boolean = true, 
+  measureName?: string, 
+  customMin?: number, 
+  customMax?: number,
+  autoScale?: boolean,
+  includeZero?: boolean
+): [number, number] {
   const visibleSeries = visibleOnly ? seriesData.filter(s => s.visible) : seriesData;
   
   if (visibleSeries.length === 0) return [0, 100];
   
-  // If we have a measure name, check for fixed range
-  if (measureName) {
+  // If custom min/max are provided, use them
+  if (customMin !== undefined && customMax !== undefined) {
+    return [customMin, customMax];
+  }
+  
+  // If autoScale is explicitly false and we have a measure name, check for fixed ranges
+  if (!autoScale && measureName) {
     const normalizedMetric = measureName.toLowerCase();
     
     // Check exact match first
@@ -449,10 +462,32 @@ function calculateYDomain(seriesData: SeriesData[], visibleOnly: boolean = true,
   const max = Math.max(...allValues);
   const padding = (max - min) * 0.1; // 10% padding
   
-  // For line charts, don't force zero inclusion unless data crosses zero
-  const includeZero = min < 0 && max > 0; // Only include zero if data crosses it
-  const minDomain = includeZero ? Math.min(0, min - padding) : min - padding;
-  const maxDomain = max + padding;
+  // Determine if we should include zero
+  let shouldIncludeZero = includeZero;
+  if (shouldIncludeZero === undefined) {
+    // Default behavior: include zero only if data crosses it or if not auto-scaling
+    shouldIncludeZero = autoScale === false || (min < 0 && max > 0);
+  }
+  
+  // Calculate domain based on settings
+  let minDomain: number;
+  let maxDomain: number;
+  
+  if (autoScale !== false) {
+    // Auto-scale to fit data
+    minDomain = min - padding;
+    maxDomain = max + padding;
+    
+    // Include zero if requested
+    if (shouldIncludeZero) {
+      minDomain = Math.min(0, minDomain);
+      maxDomain = Math.max(0, maxDomain);
+    }
+  } else {
+    // Traditional scaling (start from 0 for positive data)
+    minDomain = shouldIncludeZero || min >= 0 ? 0 : min - padding;
+    maxDomain = max + padding;
+  }
   
   // Apply custom min/max if provided
   const finalMin = customMin !== undefined ? customMin : minDomain;
@@ -487,9 +522,10 @@ export const BaseChart: React.FC<BaseChartProps> = ({
   const [showZeroValues, setShowZeroValues] = useState(false);
   const [hasPositiveAndNegative, setHasPositiveAndNegative] = useState(false);
   
-  // Zoom state - moved up before useEffect
-  const [zoomLevel, setZoomLevel] = useState(1);
-  const [containerDimensions, setContainerDimensions] = useState({ width: 0, height: 0 });
+  // Pan state - for dragging the chart
+  const [isPanning, setIsPanning] = useState(false);
+  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
+  const [panStart, setPanStart] = useState({ x: 0, y: 0 });
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [showNavigationHint, setShowNavigationHint] = useState(false);
   const navigationHintTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -3090,7 +3126,7 @@ export const BaseChart: React.FC<BaseChartProps> = ({
         .text(settings.title.text);
     }
 
-  }, [data, settings, chartType, seriesData, legendItems, handleSeriesToggle, hasPositiveAndNegative, zoomLevel]);
+  }, [data, settings, chartType, seriesData, legendItems, handleSeriesToggle, hasPositiveAndNegative]);
 
   // Calculate adjusted height for the SVG
   // Add extra height to accommodate titles positioned above margins
@@ -3114,8 +3150,8 @@ export const BaseChart: React.FC<BaseChartProps> = ({
         overflow: 'hidden' // Container should not overflow
       }}
     >
-      {/* Help text when chart is scrollable - shows as tooltip on hover */}
-      {(zoomLevel > 1 || dimensions.width > 800 || svgHeight > 500) && (
+      {/* Help text when chart is pannable */}
+      {(dimensions.width > 800 || svgHeight > 500) && (
         <div
           style={{
             position: 'absolute',
@@ -3135,82 +3171,7 @@ export const BaseChart: React.FC<BaseChartProps> = ({
             visibility: showNavigationHint ? 'visible' : 'hidden'
           }}
         >
-          Use scrollbars to navigate • Zoom in/out with controls • Drag to select data
-        </div>
-      )}
-      
-      {/* Zoom controls for all charts */}
-      {(
-        <div 
-          style={{
-            position: 'absolute',
-            top: '20px',
-            right: '20px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '4px',
-            zIndex: 10
-          }}
-        >
-          <button
-            onClick={() => setZoomLevel(Math.min(zoomLevel * 1.2, 5))}
-            style={{
-              width: '32px',
-              height: '32px',
-              borderRadius: '4px',
-              border: '1px solid #e5e7eb',
-              backgroundColor: '#fff',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: '16px',
-              fontWeight: 'bold',
-              color: '#374151'
-            }}
-            title="Zoom In"
-          >
-            +
-          </button>
-          <button
-            onClick={() => setZoomLevel(1)}
-            style={{
-              width: '32px',
-              height: '32px',
-              borderRadius: '4px',
-              border: '1px solid #e5e7eb',
-              backgroundColor: '#fff',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: '12px',
-              color: '#374151'
-            }}
-            title="Reset Zoom"
-          >
-            1:1
-          </button>
-          <button
-            onClick={() => setZoomLevel(Math.max(zoomLevel * 0.8, 0.5))}
-            style={{
-              width: '32px',
-              height: '32px',
-              borderRadius: '4px',
-              border: '1px solid #e5e7eb',
-              backgroundColor: '#fff',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: '16px',
-              fontWeight: 'bold',
-              color: '#374151'
-            }}
-            title="Zoom Out"
-          >
-            −
-          </button>
+          Hold Shift + Drag to pan • Click and drag to select data
         </div>
       )}
       <div 
@@ -3227,39 +3188,49 @@ export const BaseChart: React.FC<BaseChartProps> = ({
             clearTimeout(navigationHintTimeoutRef.current);
           }
           setShowNavigationHint(false);
+          // Also stop panning
+          setIsPanning(false);
         }}
         style={{
           width: '100%',
           height: 'auto',
           maxHeight: '600px', // Fixed max height for consistent experience
-          // Always use auto to show scrollbars when content overflows
-          overflow: 'auto',
+          overflow: 'hidden', // Hidden to enable panning
           position: 'relative',
-          border: (() => {
-            const chartWidth = dimensions.width * zoomLevel;
-            const chartHeight = svgHeight * zoomLevel;
-            const availableWidth = containerDimensions.width || dimensions.width;
-            const availableHeight = containerDimensions.height || (svgHeight + 40);
-            
-            const widthOverflow = chartWidth > availableWidth;
-            const heightOverflow = chartHeight > availableHeight;
-            
-            // Show border when scrollbars are shown
-            return (zoomLevel > 1 || widthOverflow || heightOverflow || data?.data?.length > 50) 
-              ? '1px solid #e5e7eb' 
-              : 'none';
-          })(),
+          border: '1px solid #e5e7eb',
           borderRadius: '4px',
-          backgroundColor: '#fafafa' // Background for scroll area
+          backgroundColor: '#fafafa', // Background for scroll area
+          cursor: isPanning ? 'grabbing' : 'default'
         }}
+        onMouseDown={(e) => {
+          // Only start panning with shift key
+          if (e.shiftKey && !e.altKey && !e.ctrlKey) {
+            e.preventDefault();
+            setIsPanning(true);
+            setPanStart({ 
+              x: e.clientX - panOffset.x, 
+              y: e.clientY - panOffset.y 
+            });
+          }
+        }}
+        onMouseMove={(e) => {
+          if (isPanning) {
+            e.preventDefault();
+            setPanOffset({
+              x: e.clientX - panStart.x,
+              y: e.clientY - panStart.y
+            });
+          }
+        }}
+        onMouseUp={() => setIsPanning(false)}
       >
         <div
           style={{
-            width: dimensions.width * zoomLevel,
-            height: svgHeight * zoomLevel,
+            width: dimensions.width,
+            height: svgHeight,
             position: 'relative',
-            minWidth: dimensions.width, // Ensure minimum width
-            minHeight: svgHeight // Ensure minimum height
+            transform: `translate(${panOffset.x}px, ${panOffset.y}px)`,
+            transition: isPanning ? 'none' : 'transform 0.2s ease-out'
           }}
         >
           <svg
@@ -3269,12 +3240,7 @@ export const BaseChart: React.FC<BaseChartProps> = ({
             className="d3-chart"
             style={{
               fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
-              background: 'linear-gradient(to bottom, #ffffff 0%, #fafafa 100%)',
-              transform: `scale(${zoomLevel})`,
-              transformOrigin: 'top left', // Changed to top-left for predictable scrolling
-              position: 'absolute',
-              top: 0,
-              left: 0
+              background: 'linear-gradient(to bottom, #ffffff 0%, #fafafa 100%)'
             }}
           />
         </div>
@@ -4040,8 +4006,38 @@ function renderBarChart(g: any, data: any[], width: number, height: number, sett
     .range([responsivePadding, width - responsivePadding])
     .padding(0.1);
 
+  // Calculate Y domain with auto-scaling support
+  const values = filteredData.map(d => +d.measures[firstMeasureKey]).filter(v => !isNaN(v));
+  const minValue = d3.min(values) || 0;
+  const maxValue = d3.max(values) || 0;
+  
+  // Debug logging for auto-scale
+  console.log('Bar Chart Y-axis settings:', {
+    autoScale: settings.axes?.y?.autoScale,
+    includeZero: settings.axes?.y?.includeZero,
+    axesY: settings.axes?.y,
+    values: values.slice(0, 5),
+    minValue,
+    maxValue
+  });
+  
+  let yDomain: [number, number];
+  if (settings.axes?.y?.autoScale !== false) {
+    // Auto-scale to fit data
+    const padding = (maxValue - minValue) * 0.1;
+    yDomain = [minValue - padding, maxValue + padding];
+    if (settings.axes?.y?.includeZero) {
+      yDomain = [Math.min(0, yDomain[0]), Math.max(0, yDomain[1])];
+    }
+    console.log('Using auto-scale, yDomain:', yDomain);
+  } else {
+    // Traditional scaling (start from 0)
+    yDomain = [0, maxValue * 1.1];
+    console.log('Using traditional scale, yDomain:', yDomain);
+  }
+  
   const yScale = d3.scaleLinear()
-    .domain([0, d3.max(filteredData, d => +d.measures[firstMeasureKey]) || 0])
+    .domain(yDomain)
     .range([adjustedHeight, 0]);
 
   // Use the color palette from settings for bar charts
@@ -4986,7 +4982,9 @@ function renderMultiSeriesAreaChart(
   // Calculate Y domain across all processed series
   const customMin = settings.axes?.y?.customScale ? settings.axes?.y?.minValue : undefined;
   const customMax = settings.axes?.y?.customScale ? settings.axes?.y?.maxValue : undefined;
-  const yDomain = calculateYDomain(visibleSeries, true, undefined, customMin, customMax);
+  const autoScale = settings.axes?.y?.autoScale !== false; // Default to true
+  const includeZero = settings.axes?.y?.includeZero;
+  const yDomain = calculateYDomain(visibleSeries, true, undefined, customMin, customMax, autoScale, includeZero);
   const yScale = d3.scaleLinear()
     .domain(yDomain)
     .range([height, 0]);
@@ -5662,7 +5660,9 @@ function renderMultiSeriesLineChart(
   // Calculate Y domain across all processed series
   const customMin = settings.axes?.y?.customScale ? settings.axes?.y?.minValue : undefined;
   const customMax = settings.axes?.y?.customScale ? settings.axes?.y?.maxValue : undefined;
-  const yDomain = calculateYDomain(visibleSeries, true, undefined, customMin, customMax);
+  const autoScale = settings.axes?.y?.autoScale !== false; // Default to true
+  const includeZero = settings.axes?.y?.includeZero;
+  const yDomain = calculateYDomain(visibleSeries, true, undefined, customMin, customMax, autoScale, includeZero);
   const yScale = d3.scaleLinear()
     .domain(yDomain)
     .range([height, 0]);
