@@ -429,24 +429,27 @@ function calculateYDomain(
     }
   }
   
-  // Check if all series have the same name (common case for single measure)
-  const uniqueNames = [...new Set(visibleSeries.map(s => s.name))];
-  if (uniqueNames.length === 1) {
-    const metricName = uniqueNames[0];
-    const normalizedMetric = metricName.toLowerCase();
-    
-    // Check exact match first
-    if (METRIC_FIXED_RANGES[normalizedMetric]) {
-      return [METRIC_FIXED_RANGES[normalizedMetric].min, METRIC_FIXED_RANGES[normalizedMetric].max];
-    }
-    
-    // Check for partial matches
-    for (const [key, range] of Object.entries(METRIC_FIXED_RANGES)) {
-      if (normalizedMetric.includes(key) || 
-          (key.includes('percentage') && normalizedMetric.endsWith('_percentage')) ||
-          (key.includes('percentage') && normalizedMetric.endsWith('_percent')) ||
-          (key.includes('rate') && normalizedMetric.endsWith('_rate'))) {
-        return [range.min, range.max];
+  // Only use fixed ranges when autoScale is explicitly false
+  if (autoScale === false) {
+    // Check if all series have the same name (common case for single measure)
+    const uniqueNames = [...new Set(visibleSeries.map(s => s.name))];
+    if (uniqueNames.length === 1) {
+      const metricName = uniqueNames[0];
+      const normalizedMetric = metricName.toLowerCase();
+      
+      // Check exact match first
+      if (METRIC_FIXED_RANGES[normalizedMetric]) {
+        return [METRIC_FIXED_RANGES[normalizedMetric].min, METRIC_FIXED_RANGES[normalizedMetric].max];
+      }
+      
+      // Check for partial matches
+      for (const [key, range] of Object.entries(METRIC_FIXED_RANGES)) {
+        if (normalizedMetric.includes(key) || 
+            (key.includes('percentage') && normalizedMetric.endsWith('_percentage')) ||
+            (key.includes('percentage') && normalizedMetric.endsWith('_percent')) ||
+            (key.includes('rate') && normalizedMetric.endsWith('_rate'))) {
+          return [range.min, range.max];
+        }
       }
     }
   }
@@ -522,15 +525,67 @@ export const BaseChart: React.FC<BaseChartProps> = ({
   const [showZeroValues, setShowZeroValues] = useState(false);
   const [hasPositiveAndNegative, setHasPositiveAndNegative] = useState(false);
   
-  // Pan and zoom state
+  // Pan and zoom state - start zoomed out to show more data
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
-  const [scale, setScale] = useState(1);
+  const [scale, setScale] = useState(0.6); // Start at 60% to show all data
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   
   // Debug logging for pan/zoom state changes
   useEffect(() => {
     console.log('Pan/Zoom state changed:', { panOffset, scale });
   }, [panOffset, scale]);
+  
+  // Handle wheel events with passive: false to allow preventDefault
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      
+      console.log('Wheel event:', {
+        deltaX: e.deltaX,
+        deltaY: e.deltaY,
+        ctrlKey: e.ctrlKey,
+        metaKey: e.metaKey,
+        shiftKey: e.shiftKey
+      });
+      
+      // Check if it's a pinch zoom gesture (ctrl key or cmd key on Mac)
+      if (e.ctrlKey || e.metaKey) {
+        // Zoom
+        const zoomSpeed = 0.01;
+        const newScale = Math.max(0.5, Math.min(3, scale - e.deltaY * zoomSpeed));
+        
+        // Calculate zoom center point relative to container
+        const rect = container.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        
+        // Adjust pan to keep zoom centered on cursor
+        const scaleDiff = newScale - scale;
+        const newPanX = panOffset.x - (x - rect.width / 2) * scaleDiff;
+        const newPanY = panOffset.y - (y - rect.height / 2) * scaleDiff;
+        
+        setScale(newScale);
+        setPanOffset({ x: newPanX, y: newPanY });
+      } else {
+        // Pan (normal scroll or two-finger swipe on touchpad)
+        const panSpeed = 1;
+        setPanOffset({
+          x: panOffset.x - e.deltaX * panSpeed,
+          y: panOffset.y - e.deltaY * panSpeed
+        });
+      }
+    };
+    
+    // Add event listener with passive: false
+    container.addEventListener('wheel', handleWheel, { passive: false });
+    
+    return () => {
+      container.removeEventListener('wheel', handleWheel);
+    };
+  }, [scale, panOffset]);
   const [showNavigationHint, setShowNavigationHint] = useState(false);
   const navigationHintTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
@@ -3146,49 +3201,73 @@ export const BaseChart: React.FC<BaseChartProps> = ({
       )}
       
       {/* Zoom/Pan controls */}
-      {(scale !== 1 || panOffset.x !== 0 || panOffset.y !== 0) && (
-        <div
+      <div
+        style={{
+          position: 'absolute',
+          top: '10px',
+          right: '10px',
+          display: 'flex',
+          gap: '8px',
+          zIndex: 20
+        }}
+      >
+        <button
+          onClick={() => {
+            // Calculate optimal scale and pan to fit all data
+            if (data && dimensions.width > 0 && svgHeight > 0) {
+              // For now, just zoom out to 60% like in the desired screenshot
+              setScale(0.6);
+              setPanOffset({ x: 0, y: 0 });
+            }
+          }}
           style={{
-            position: 'absolute',
-            top: '10px',
-            right: '10px',
-            display: 'flex',
-            gap: '8px',
-            zIndex: 20
+            padding: '4px 8px',
+            backgroundColor: '#10B981',
+            color: 'white',
+            border: 'none',
+            borderRadius: '4px',
+            fontSize: '12px',
+            cursor: 'pointer',
+            boxShadow: '0 2px 4px rgba(0, 0, 0, 0.2)'
           }}
         >
-          <button
-            onClick={() => {
-              setScale(1);
-              setPanOffset({ x: 0, y: 0 });
-            }}
-            style={{
-              padding: '4px 8px',
-              backgroundColor: '#3B82F6',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              fontSize: '12px',
-              cursor: 'pointer',
-              boxShadow: '0 2px 4px rgba(0, 0, 0, 0.2)'
-            }}
-          >
-            Reset View
-          </button>
-          <div
-            style={{
-              padding: '4px 8px',
-              backgroundColor: 'rgba(0, 0, 0, 0.8)',
-              color: 'white',
-              borderRadius: '4px',
-              fontSize: '12px',
-              pointerEvents: 'none'
-            }}
-          >
-            {Math.round(scale * 100)}%
-          </div>
-        </div>
-      )}
+          Fit to Data
+        </button>
+        {(scale !== 1 || panOffset.x !== 0 || panOffset.y !== 0) && (
+          <>
+            <button
+              onClick={() => {
+                setScale(1);
+                setPanOffset({ x: 0, y: 0 });
+              }}
+              style={{
+                padding: '4px 8px',
+                backgroundColor: '#3B82F6',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                fontSize: '12px',
+                cursor: 'pointer',
+                boxShadow: '0 2px 4px rgba(0, 0, 0, 0.2)'
+              }}
+            >
+              Reset View
+            </button>
+            <div
+              style={{
+                padding: '4px 8px',
+                backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                color: 'white',
+                borderRadius: '4px',
+                fontSize: '12px',
+                pointerEvents: 'none'
+              }}
+            >
+              {Math.round(scale * 100)}%
+            </div>
+          </>
+        )}
+      </div>
       <div 
         ref={scrollContainerRef}
         onMouseEnter={() => {
@@ -3203,8 +3282,6 @@ export const BaseChart: React.FC<BaseChartProps> = ({
             clearTimeout(navigationHintTimeoutRef.current);
           }
           setShowNavigationHint(false);
-          // Also stop panning
-          setIsPanning(false);
         }}
         style={{
           width: '100%',
@@ -3216,44 +3293,6 @@ export const BaseChart: React.FC<BaseChartProps> = ({
           borderRadius: '4px',
           backgroundColor: '#fafafa', // Background for scroll area
           cursor: 'default'
-        }}
-        onWheel={(e) => {
-          e.preventDefault();
-          
-          console.log('Wheel event:', {
-            deltaX: e.deltaX,
-            deltaY: e.deltaY,
-            ctrlKey: e.ctrlKey,
-            metaKey: e.metaKey,
-            shiftKey: e.shiftKey
-          });
-          
-          // Check if it's a pinch zoom gesture (ctrl key or cmd key on Mac)
-          if (e.ctrlKey || e.metaKey) {
-            // Zoom
-            const zoomSpeed = 0.01;
-            const newScale = Math.max(0.5, Math.min(3, scale - e.deltaY * zoomSpeed));
-            
-            // Calculate zoom center point relative to container
-            const rect = e.currentTarget.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
-            
-            // Adjust pan to keep zoom centered on cursor
-            const scaleDiff = newScale - scale;
-            const newPanX = panOffset.x - (x - rect.width / 2) * scaleDiff;
-            const newPanY = panOffset.y - (y - rect.height / 2) * scaleDiff;
-            
-            setScale(newScale);
-            setPanOffset({ x: newPanX, y: newPanY });
-          } else {
-            // Pan (normal scroll or two-finger swipe on touchpad)
-            const panSpeed = 1;
-            setPanOffset({
-              x: panOffset.x - e.deltaX * panSpeed,
-              y: panOffset.y - e.deltaY * panSpeed
-            });
-          }
         }}
       >
         <div
@@ -5697,7 +5736,23 @@ function renderMultiSeriesLineChart(
   const customMax = settings.axes?.y?.customScale ? settings.axes?.y?.maxValue : undefined;
   const autoScale = settings.axes?.y?.autoScale !== false; // Default to true
   const includeZero = settings.axes?.y?.includeZero;
+  
+  // Debug logging for line chart auto-scale
+  console.log('Line Chart Y-axis settings:', {
+    autoScale,
+    includeZero,
+    customMin,
+    customMax,
+    axesY: settings.axes?.y,
+    seriesData: visibleSeries.map(s => ({
+      name: s.name,
+      values: s.data.map(d => d.value).slice(0, 5)
+    }))
+  });
+  
   const yDomain = calculateYDomain(visibleSeries, true, undefined, customMin, customMax, autoScale, includeZero);
+  console.log('Line Chart calculated Y domain:', yDomain);
+  
   const yScale = d3.scaleLinear()
     .domain(yDomain)
     .range([height, 0]);
