@@ -289,13 +289,30 @@ const SimpleFacilityBuilder: React.FC = () => {
       // Also check facility_layout for complete equipment data
       if (siteData.facility_layout && siteData.facility_layout.equipment) {
         // This would be our saved layout data
-        // Use it to override positions if available
         const layoutEquipment = siteData.facility_layout.equipment;
         layoutEquipment.forEach((layoutEq: any) => {
           const existingEq = equipment.find(eq => eq.equipment_id === layoutEq.equipment_id);
           if (existingEq) {
+            // Update positions for existing equipment
             existingEq.x = layoutEq.x;
             existingEq.y = layoutEq.y;
+          } else {
+            // Add equipment that doesn't have specialized columns (like shelving, vents, sensors)
+            // These are only stored in facility_layout
+            if (['shelving', 'vent', 'sensor'].includes(layoutEq.type)) {
+              equipment.push({
+                equipment_id: layoutEq.equipment_id,
+                type: layoutEq.type,
+                label: layoutEq.label || layoutEq.equipment_id,
+                x: layoutEq.x || 0,
+                y: layoutEq.y || 0,
+                z: layoutEq.z || 0,
+                radius: layoutEq.radius || 5,
+                status: layoutEq.status || 'active',
+                config: layoutEq.config || {},
+                equipment_type: layoutEq.equipment_type
+              });
+            }
           }
         });
       }
@@ -485,7 +502,8 @@ const SimpleFacilityBuilder: React.FC = () => {
           }
         }));
 
-      // Also save a complete layout snapshot
+      // Save a complete layout snapshot with ALL equipment types
+      // This is crucial for equipment types that don't have specialized columns (shelving, vents, sensors)
       const layoutToSave = {
         equipment: facilityData.equipment,
         lastModified: new Date().toISOString(),

@@ -522,11 +522,15 @@ export const BaseChart: React.FC<BaseChartProps> = ({
   const [showZeroValues, setShowZeroValues] = useState(false);
   const [hasPositiveAndNegative, setHasPositiveAndNegative] = useState(false);
   
-  // Pan state - for dragging the chart
-  const [isPanning, setIsPanning] = useState(false);
+  // Pan and zoom state
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
-  const [panStart, setPanStart] = useState({ x: 0, y: 0 });
+  const [scale, setScale] = useState(1);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  
+  // Debug logging for pan/zoom state changes
+  useEffect(() => {
+    console.log('Pan/Zoom state changed:', { panOffset, scale });
+  }, [panOffset, scale]);
   const [showNavigationHint, setShowNavigationHint] = useState(false);
   const navigationHintTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
@@ -3137,7 +3141,52 @@ export const BaseChart: React.FC<BaseChartProps> = ({
             visibility: showNavigationHint ? 'visible' : 'hidden'
           }}
         >
-          Hold Shift + Drag to pan • Click and drag to select data
+          Two-finger swipe to pan • Pinch to zoom • Click and drag to select data
+        </div>
+      )}
+      
+      {/* Zoom/Pan controls */}
+      {(scale !== 1 || panOffset.x !== 0 || panOffset.y !== 0) && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '10px',
+            right: '10px',
+            display: 'flex',
+            gap: '8px',
+            zIndex: 20
+          }}
+        >
+          <button
+            onClick={() => {
+              setScale(1);
+              setPanOffset({ x: 0, y: 0 });
+            }}
+            style={{
+              padding: '4px 8px',
+              backgroundColor: '#3B82F6',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              fontSize: '12px',
+              cursor: 'pointer',
+              boxShadow: '0 2px 4px rgba(0, 0, 0, 0.2)'
+            }}
+          >
+            Reset View
+          </button>
+          <div
+            style={{
+              padding: '4px 8px',
+              backgroundColor: 'rgba(0, 0, 0, 0.8)',
+              color: 'white',
+              borderRadius: '4px',
+              fontSize: '12px',
+              pointerEvents: 'none'
+            }}
+          >
+            {Math.round(scale * 100)}%
+          </div>
         </div>
       )}
       <div 
@@ -3166,37 +3215,56 @@ export const BaseChart: React.FC<BaseChartProps> = ({
           border: '1px solid #e5e7eb',
           borderRadius: '4px',
           backgroundColor: '#fafafa', // Background for scroll area
-          cursor: isPanning ? 'grabbing' : 'default'
+          cursor: 'default'
         }}
-        onMouseDown={(e) => {
-          // Only start panning with shift key
-          if (e.shiftKey && !e.altKey && !e.ctrlKey) {
-            e.preventDefault();
-            setIsPanning(true);
-            setPanStart({ 
-              x: e.clientX - panOffset.x, 
-              y: e.clientY - panOffset.y 
-            });
-          }
-        }}
-        onMouseMove={(e) => {
-          if (isPanning) {
-            e.preventDefault();
+        onWheel={(e) => {
+          e.preventDefault();
+          
+          console.log('Wheel event:', {
+            deltaX: e.deltaX,
+            deltaY: e.deltaY,
+            ctrlKey: e.ctrlKey,
+            metaKey: e.metaKey,
+            shiftKey: e.shiftKey
+          });
+          
+          // Check if it's a pinch zoom gesture (ctrl key or cmd key on Mac)
+          if (e.ctrlKey || e.metaKey) {
+            // Zoom
+            const zoomSpeed = 0.01;
+            const newScale = Math.max(0.5, Math.min(3, scale - e.deltaY * zoomSpeed));
+            
+            // Calculate zoom center point relative to container
+            const rect = e.currentTarget.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            // Adjust pan to keep zoom centered on cursor
+            const scaleDiff = newScale - scale;
+            const newPanX = panOffset.x - (x - rect.width / 2) * scaleDiff;
+            const newPanY = panOffset.y - (y - rect.height / 2) * scaleDiff;
+            
+            setScale(newScale);
+            setPanOffset({ x: newPanX, y: newPanY });
+          } else {
+            // Pan (normal scroll or two-finger swipe on touchpad)
+            const panSpeed = 1;
             setPanOffset({
-              x: e.clientX - panStart.x,
-              y: e.clientY - panStart.y
+              x: panOffset.x - e.deltaX * panSpeed,
+              y: panOffset.y - e.deltaY * panSpeed
             });
           }
         }}
-        onMouseUp={() => setIsPanning(false)}
       >
         <div
           style={{
             width: dimensions.width,
             height: svgHeight,
             position: 'relative',
-            transform: `translate(${panOffset.x}px, ${panOffset.y}px)`,
-            transition: isPanning ? 'none' : 'transform 0.2s ease-out'
+            transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${scale})`,
+            transformOrigin: 'center',
+            transition: 'transform 0.1s ease-out',
+            pointerEvents: 'auto'
           }}
         >
           <svg
@@ -3206,7 +3274,8 @@ export const BaseChart: React.FC<BaseChartProps> = ({
             className="d3-chart"
             style={{
               fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
-              background: 'linear-gradient(to bottom, #ffffff 0%, #fafafa 100%)'
+              background: 'linear-gradient(to bottom, #ffffff 0%, #fafafa 100%)',
+              pointerEvents: 'auto'
             }}
           />
         </div>
