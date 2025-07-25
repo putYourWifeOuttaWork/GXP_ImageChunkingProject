@@ -666,40 +666,6 @@ export const BaseChart: React.FC<BaseChartProps> = ({
     setLegendItems(newLegendItems);
   }, [data, settings]);
 
-  // Monitor container dimensions to determine if scrollbars are needed
-  useEffect(() => {
-    if (!containerRef.current) return;
-    
-    const updateDimensions = () => {
-      if (containerRef.current) {
-        const rect = containerRef.current.getBoundingClientRect();
-        setContainerDimensions({ 
-          width: rect.width, 
-          height: Math.min(rect.height, window.innerHeight * 0.8) 
-        });
-      }
-    };
-    
-    // Initial measurement
-    updateDimensions();
-    
-    // Update on window resize
-    window.addEventListener('resize', updateDimensions);
-    
-    // Use ResizeObserver if available for more accurate detection
-    let resizeObserver: ResizeObserver | null = null;
-    if (window.ResizeObserver) {
-      resizeObserver = new ResizeObserver(updateDimensions);
-      resizeObserver.observe(containerRef.current);
-    }
-    
-    return () => {
-      window.removeEventListener('resize', updateDimensions);
-      if (resizeObserver) {
-        resizeObserver.disconnect();
-      }
-    };
-  }, []);
 
   // Handle series visibility toggle
   const handleSeriesToggle = useCallback((seriesId: string) => {
