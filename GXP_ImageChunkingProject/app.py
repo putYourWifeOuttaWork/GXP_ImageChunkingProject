@@ -1,5 +1,4 @@
-import os, json, base64
-from io import BytesIO
+import os, json
 from datetime import datetime
 from collections import defaultdict
 
@@ -16,6 +15,7 @@ CHUNK_TOPIC = os.getenv("CHUNK_TOPIC", "esp32cam/image/chunk")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 SUPABASE_BUCKET = os.getenv("SUPABASE_BUCKET", "petri-images")
+DISK_PATH = os.getenv("DISK_PATH", "/mnt/data")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -24,25 +24,28 @@ expected_chunks = None
 received_data = {}
 image_id = None
 
+
 def upload_image_and_insert():
     global image_id, received_data
 
-    # Reassemble
-    image_bytes = BytesIO()
-    for i in range(expected_chunks):
-        if i not in received_data:
-            print(f"Missing chunk {i}")
-            return
-        image_bytes.write(received_data[i])
-    print(f"[+] All {expected_chunks} chunks stitched")
+    # Save reassembled image to SSD
+    filepath = os.path.join(DISK_PATH, f"{image_id}.jpg")
+    with open(filepath, "wb") as f:
+        for i in range(expected_chunks):
+            if i not in received_data:
+                print(f"Missing chunk {i}")
+                return
+            f.write(received_data[i])
+    print(f"[+] Image written to {filepath}")
 
     # Upload to Supabase
-    filename = f"{image_id}.jpg"
-    image_bytes.seek(0)
-    supabase.storage.from_(SUPABASE_BUCKET).upload(filename, image_bytes, {"content-type": "image/jpeg"})
+    with open(filepath, "rb") as img_file:
+        supabase.storage.from_(SUPABASE_BUCKET).upload(f"{image_id}.jpg", img_file, {
+            "content-type": "image/jpeg"
+        })
 
     # Image URL
-    public_url = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/{filename}"
+    public_url = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/{image_id}.jpg"
 
     # Insert metadata
     result = supabase.table("gxp_raw_observations").insert({
@@ -51,13 +54,18 @@ def upload_image_and_insert():
         "image_url": public_url,
         "chunk_status": "complete",
         "submitted_at": datetime.utcnow().isoformat(),
-        "raw_payload": {}  # Expand later
+        "raw_payload": {}  # Extend as needed later
     }).execute()
-    print("[✔] Uploaded and inserted record:", result)
+    print("[✔] Image uploaded and DB record inserted:", result)
+
+    # Cleanup file
+    os.remove(filepath)
+
 
 def on_connect(client, userdata, flags, rc):
     print("Connected to MQTT broker")
     client.subscribe([(INFO_TOPIC, 0), (CHUNK_TOPIC, 0)])
+
 
 def on_message(client, userdata, msg):
     global expected_chunks, received_data, image_id
@@ -73,7 +81,7 @@ def on_message(client, userdata, msg):
         if expected_chunks is None:
             print("⚠ No metadata received before end marker")
             return
-        print("End marker received, stitching image")
+        print("End marker received. Stitching image...")
         upload_image_and_insert()
         expected_chunks = None
         received_data.clear()
@@ -87,6 +95,7 @@ def on_message(client, userdata, msg):
             received_data[chunk_num] = data
             print(f"Chunk {chunk_num} received ({len(data)} bytes)")
 
+
 client = mqtt.Client()
 client.tls_set(cert_reqs=None)
 client.tls_insecure_set(True)
@@ -95,5 +104,6 @@ client.on_connect = on_connect
 client.on_message = on_message
 
 client.connect(MQTT_BROKER, MQTT_PORT, 60)
-print("[MQTT] Connecting...")
+print("[MQTT] Connecting and listening...")
 client.loop_forever()
+
