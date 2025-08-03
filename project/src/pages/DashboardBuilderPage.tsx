@@ -16,7 +16,11 @@ import {
   X,
   MoreVertical,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Check,
+  AlertCircle,
+  Loader2,
+  Map
 } from 'lucide-react';
 import { DashboardService } from '../services/dashboardService';
 import { ReportManagementService } from '../services/reportManagementService';
@@ -31,14 +35,17 @@ import LoadingScreen from '../components/common/LoadingScreen';
 import { useAuthStore } from '../stores/authStore';
 import { DashboardWidgetPreview } from '../components/dashboards/DashboardWidgetPreview';
 import { WidgetConfigModal } from '../components/dashboards/WidgetConfigModal';
+import { useDebouncedCallback } from '../hooks/useDebounce';
 
 // Grid configuration
-const GRID_COLS = 12;
+const DEFAULT_GRID_COLS = 20; // Increased from 12 for wider dashboards
 const DEFAULT_GRID_ROWS = 8;
 const CELL_SIZE = 80;
 const GRID_GAP = 16;
 const ROW_EXPANSION_THRESHOLD = 2; // Expand when widget is within 2 rows of bottom
 const ROW_EXPANSION_AMOUNT = 5; // Add 5 rows at a time
+const COL_EXPANSION_THRESHOLD = 2; // Expand when widget is within 2 columns of right edge
+const COL_EXPANSION_AMOUNT = 5; // Add 5 columns at a time
 
 interface GridPosition {
   x: number;
@@ -55,12 +62,13 @@ const DashboardBuilderPage: React.FC = () => {
 
   // Dashboard state
   const [gridRows, setGridRows] = useState(DEFAULT_GRID_ROWS);
+  const [gridCols, setGridCols] = useState(DEFAULT_GRID_COLS);
   const [dashboard, setDashboard] = useState<Partial<Dashboard>>({
     name: '',
     description: '',
     layout: {
       type: 'grid',
-      columns: GRID_COLS,
+      columns: gridCols,
       rows: gridRows,
       gap: GRID_GAP,
       padding: 16,
@@ -80,6 +88,11 @@ const DashboardBuilderPage: React.FC = () => {
   const [showReports, setShowReports] = useState(true);
   const [configModalOpen, setConfigModalOpen] = useState(false);
   const [configWidget, setConfigWidget] = useState<DashboardWidget | null>(null);
+  
+  // Auto-save state
+  const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [lastSaved, setLastSaved] = useState<Date | null>(null);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
 
   // Drag state
   const [draggedReport, setDraggedReport] = useState<SavedReport | null>(null);
@@ -114,6 +127,12 @@ const DashboardBuilderPage: React.FC = () => {
       if (dashboardData) {
         setDashboard(dashboardData);
         setWidgets(widgetsData || []);
+        
+        // Set grid dimensions from saved dashboard
+        if (dashboardData.layout) {
+          setGridRows(dashboardData.layout.rows || DEFAULT_GRID_ROWS);
+          setGridCols(dashboardData.layout.columns || DEFAULT_GRID_COLS);
+        }
       }
     } catch (err) {
       console.error('Error loading dashboard:', err);
@@ -135,6 +154,76 @@ const DashboardBuilderPage: React.FC = () => {
     }
   };
 
+  // Auto-save function
+  const autoSaveDashboard = async () => {
+    if (!id || !dashboard.name || autoSaveStatus === 'saving') {
+      return; // Can't auto-save new dashboards or while already saving
+    }
+    
+    setAutoSaveStatus('saving');
+    try {
+      // Update existing dashboard
+      const { error } = await DashboardService.updateDashboard(id, {
+        name: dashboard.name,
+        description: dashboard.description,
+        layout: {
+          ...dashboard.layout!,
+          columns: gridCols,
+          rows: gridRows
+        },
+        updatedAt: new Date().toISOString()
+      } as Partial<Dashboard>);
+      
+      if (error) throw error;
+      
+      // Update widgets
+      await DashboardService.updateWidgets(id, widgets);
+      
+      setAutoSaveStatus('saved');
+      setLastSaved(new Date());
+      setHasUnsavedChanges(false);
+      
+      // Reset to idle after 3 seconds
+      setTimeout(() => {
+        setAutoSaveStatus('idle');
+      }, 3000);
+    } catch (err) {
+      console.error('Error auto-saving dashboard:', err);
+      setAutoSaveStatus('error');
+      // Reset to idle after 5 seconds
+      setTimeout(() => {
+        setAutoSaveStatus('idle');
+      }, 5000);
+    }
+  };
+
+  // Debounced auto-save (waits 2 seconds after last change)
+  const debouncedAutoSave = useDebouncedCallback(autoSaveDashboard, 2000);
+
+  // Watch for changes and trigger auto-save
+  useEffect(() => {
+    if (id && hasUnsavedChanges) {
+      debouncedAutoSave();
+    }
+  }, [widgets, dashboard.name, dashboard.description, gridRows, gridCols, hasUnsavedChanges]);
+
+  // Track if initial load is complete
+  const [isInitialLoad, setIsInitialLoad] = useState(true);
+  
+  // Mark as having unsaved changes when widgets or dashboard properties change
+  useEffect(() => {
+    if (id && !isInitialLoad) { // Only for existing dashboards after initial load
+      setHasUnsavedChanges(true);
+    }
+  }, [widgets, dashboard.name, dashboard.description, gridRows, gridCols]);
+  
+  // Mark initial load as complete
+  useEffect(() => {
+    if (id && isInitialLoad && dashboard.name) {
+      setTimeout(() => setIsInitialLoad(false), 500);
+    }
+  }, [id, dashboard.name]);
+
   // Save dashboard
   const saveDashboard = async () => {
     if (!dashboard.name) {
@@ -143,13 +232,19 @@ const DashboardBuilderPage: React.FC = () => {
     }
 
     setIsSaving(true);
+    setAutoSaveStatus('idle'); // Cancel any pending auto-save
+    
     try {
       if (id) {
         // Update existing dashboard
         const { error } = await DashboardService.updateDashboard(id, {
           name: dashboard.name,
           description: dashboard.description,
-          layout: dashboard.layout,
+          layout: {
+            ...dashboard.layout!,
+            columns: gridCols,
+            rows: gridRows
+          },
           updatedAt: new Date().toISOString()
         } as Partial<Dashboard>);
         
@@ -157,11 +252,24 @@ const DashboardBuilderPage: React.FC = () => {
 
         // Update widgets
         await DashboardService.updateWidgets(id, widgets);
+        
+        setLastSaved(new Date());
+        setHasUnsavedChanges(false);
       } else {
-        // Create new dashboard
+        // Create new dashboard with current grid dimensions
         const { data: newDashboard, error } = await DashboardService.createDashboard(
           dashboard.name,
-          dashboard.description || ''
+          dashboard.description || '',
+          {
+            type: 'grid',
+            columns: gridCols,
+            rows: gridRows,
+            gap: GRID_GAP,
+            padding: 16,
+            responsive: true,
+            widgets: []
+          },
+          undefined // templateId
         );
         
         if (error) throw error;
@@ -218,7 +326,7 @@ const DashboardBuilderPage: React.FC = () => {
     const height = draggedReport ? 3 : (widgets.find(w => w.id === draggedWidget)?.position.height || 3);
 
     setDropPosition({
-      x: Math.max(0, Math.min(x, GRID_COLS - width)),
+      x: Math.max(0, Math.min(x, gridCols - width)),
       y: Math.max(0, Math.min(y, gridRows - height)),
       width,
       height
@@ -305,15 +413,21 @@ const DashboardBuilderPage: React.FC = () => {
   // Check if grid needs expansion based on widget positions
   const checkGridExpansion = (currentWidgets: DashboardWidget[]) => {
     let maxBottomRow = 0;
+    let maxRightCol = 0;
     
     currentWidgets.forEach(widget => {
       const bottomRow = widget.position.y + widget.position.height;
+      const rightCol = widget.position.x + widget.position.width;
+      
       if (bottomRow > maxBottomRow) {
         maxBottomRow = bottomRow;
       }
+      if (rightCol > maxRightCol) {
+        maxRightCol = rightCol;
+      }
     });
 
-    // If any widget is within threshold of the bottom, expand
+    // Check row expansion/contraction
     if (maxBottomRow > gridRows - ROW_EXPANSION_THRESHOLD) {
       const newRows = Math.max(maxBottomRow + ROW_EXPANSION_AMOUNT, gridRows + ROW_EXPANSION_AMOUNT);
       setGridRows(newRows);
@@ -325,7 +439,6 @@ const DashboardBuilderPage: React.FC = () => {
         }
       }));
     }
-    // Contract grid if there's too much empty space (but keep minimum)
     else if (maxBottomRow < gridRows - ROW_EXPANSION_AMOUNT && gridRows > DEFAULT_GRID_ROWS) {
       const newRows = Math.max(DEFAULT_GRID_ROWS, maxBottomRow + ROW_EXPANSION_THRESHOLD);
       setGridRows(newRows);
@@ -334,6 +447,30 @@ const DashboardBuilderPage: React.FC = () => {
         layout: {
           ...prev.layout!,
           rows: newRows
+        }
+      }));
+    }
+
+    // Check column expansion/contraction
+    if (maxRightCol > gridCols - COL_EXPANSION_THRESHOLD) {
+      const newCols = Math.max(maxRightCol + COL_EXPANSION_AMOUNT, gridCols + COL_EXPANSION_AMOUNT);
+      setGridCols(newCols);
+      setDashboard(prev => ({
+        ...prev,
+        layout: {
+          ...prev.layout!,
+          columns: newCols
+        }
+      }));
+    }
+    else if (maxRightCol < gridCols - COL_EXPANSION_AMOUNT && gridCols > DEFAULT_GRID_COLS) {
+      const newCols = Math.max(DEFAULT_GRID_COLS, maxRightCol + COL_EXPANSION_THRESHOLD);
+      setGridCols(newCols);
+      setDashboard(prev => ({
+        ...prev,
+        layout: {
+          ...prev.layout!,
+          columns: newCols
         }
       }));
     }
@@ -381,12 +518,12 @@ const DashboardBuilderPage: React.FC = () => {
   };
 
   // Add widget by type
-  const addWidgetByType = (type: 'text' | 'metric' | 'image' | 'iframe' | 'custom') => {
+  const addWidgetByType = (type: 'text' | 'metric' | 'image' | 'facility' | 'iframe' | 'custom') => {
     const initialPosition = {
       x: 0,
       y: 0,
-      width: type === 'text' ? 6 : 3,
-      height: type === 'text' ? 3 : 2
+      width: type === 'text' ? 4 : type === 'facility' ? 6 : 3,
+      height: type === 'text' ? 2 : type === 'facility' ? 4 : 2
     };
     
     // Find free position for new widget
@@ -439,6 +576,16 @@ const DashboardBuilderPage: React.FC = () => {
             }
           }
         };
+      case 'facility':
+        return {
+          facilityConfiguration: {
+            siteId: null,
+            showDatePicker: true,
+            showSiteSelector: true,
+            showLegend: true,
+            showStats: true
+          }
+        };
       default:
         return {};
     }
@@ -466,14 +613,17 @@ const DashboardBuilderPage: React.FC = () => {
       let newX = widget.position.x;
       let newY = widget.position.y;
 
-      if (handle.includes('e')) newWidth = Math.max(2, Math.min(startWidth + deltaX, GRID_COLS - widget.position.x));
+      // Allow text widgets to go down to 1x1, others minimum 2x2
+      const minSize = widget.type === 'text' ? 1 : 2;
+      
+      if (handle.includes('e')) newWidth = Math.max(minSize, Math.min(startWidth + deltaX, gridCols - widget.position.x));
       if (handle.includes('w')) {
-        newWidth = Math.max(2, startWidth - deltaX);
+        newWidth = Math.max(minSize, startWidth - deltaX);
         newX = Math.max(0, widget.position.x + deltaX);
       }
-      if (handle.includes('s')) newHeight = Math.max(2, Math.min(startHeight + deltaY, gridRows - widget.position.y));
+      if (handle.includes('s')) newHeight = Math.max(minSize, Math.min(startHeight + deltaY, gridRows - widget.position.y));
       if (handle.includes('n')) {
-        newHeight = Math.max(2, startHeight - deltaY);
+        newHeight = Math.max(minSize, startHeight - deltaY);
         newY = Math.max(0, widget.position.y + deltaY);
       }
 
@@ -541,11 +691,40 @@ const DashboardBuilderPage: React.FC = () => {
               {previewMode ? 'Edit' : 'Preview'}
             </Button>
             
+            {/* Auto-save status indicator */}
+            {id && (
+              <div className="flex items-center gap-2 text-sm">
+                {autoSaveStatus === 'saving' && (
+                  <>
+                    <Loader2 size={16} className="animate-spin text-gray-500" />
+                    <span className="text-gray-500">Saving...</span>
+                  </>
+                )}
+                {autoSaveStatus === 'saved' && (
+                  <>
+                    <Check size={16} className="text-green-500" />
+                    <span className="text-green-600">Saved</span>
+                  </>
+                )}
+                {autoSaveStatus === 'error' && (
+                  <>
+                    <AlertCircle size={16} className="text-red-500" />
+                    <span className="text-red-600">Error saving</span>
+                  </>
+                )}
+                {lastSaved && autoSaveStatus === 'idle' && (
+                  <span className="text-gray-400">
+                    Last saved {new Date(lastSaved).toLocaleTimeString()}
+                  </span>
+                )}
+              </div>
+            )}
+            
             <Button
               variant="primary"
               icon={<Save size={20} />}
               onClick={saveDashboard}
-              disabled={isSaving}
+              disabled={isSaving || autoSaveStatus === 'saving'}
             >
               {isSaving ? 'Saving...' : 'Save Dashboard'}
             </Button>
@@ -560,7 +739,7 @@ const DashboardBuilderPage: React.FC = () => {
             ref={gridRef}
             className="relative bg-white rounded-lg shadow-sm border-2 border-dashed border-gray-300"
             style={{
-              width: GRID_COLS * CELL_SIZE + (GRID_COLS - 1) * GRID_GAP + 32,
+              width: gridCols * CELL_SIZE + (gridCols - 1) * GRID_GAP + 32,
               height: gridRows * CELL_SIZE + (gridRows - 1) * GRID_GAP + 32,
               padding: 16
             }}
@@ -572,14 +751,14 @@ const DashboardBuilderPage: React.FC = () => {
               <div className="absolute inset-0 pointer-events-none" style={{ padding: 16 }}>
                 {Array.from({ length: gridRows }).map((_, row) => (
                   <div key={row} className="flex">
-                    {Array.from({ length: GRID_COLS }).map((_, col) => (
+                    {Array.from({ length: gridCols }).map((_, col) => (
                       <div
                         key={col}
                         className="border border-gray-200"
                         style={{
                           width: CELL_SIZE,
                           height: CELL_SIZE,
-                          marginRight: col < GRID_COLS - 1 ? GRID_GAP : 0,
+                          marginRight: col < gridCols - 1 ? GRID_GAP : 0,
                           marginBottom: row < gridRows - 1 ? GRID_GAP : 0
                         }}
                       />
@@ -633,6 +812,7 @@ const DashboardBuilderPage: React.FC = () => {
                   onConfigureClick={() => openWidgetConfig(widget.id)}
                   onRemove={() => removeWidget(widget.id)}
                   isEditMode={!previewMode}
+                  onWidgetUpdate={updateWidgetConfig}
                 />
 
                 {/* Resize handles */}
@@ -712,14 +892,15 @@ const DashboardBuilderPage: React.FC = () => {
                     { type: 'text', icon: Type, label: 'Text' },
                     { type: 'image', icon: Image, label: 'Image' },
                     { type: 'metric', icon: BarChart3, label: 'Metric' },
+                    { type: 'facility', icon: Map, label: 'Facility' },
                     { type: 'iframe', icon: Frame, label: 'IFrame' },
                     { type: 'custom', icon: Code, label: 'Custom' }
                   ].map(({ type, icon: Icon, label }) => (
                     <button
                       key={type}
                       className="p-2 text-center border border-gray-200 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                      disabled={!['text', 'metric'].includes(type)}
-                      title={['text', 'metric'].includes(type) ? `Add ${label} widget` : 'Coming soon'}
+                      disabled={!['text', 'metric', 'image', 'facility'].includes(type)}
+                      title={['text', 'metric', 'image', 'facility'].includes(type) ? `Add ${label} widget` : 'Coming soon'}
                       onClick={() => addWidgetByType(type as any)}
                     >
                       <Icon size={20} className="mx-auto mb-1 text-gray-600" />

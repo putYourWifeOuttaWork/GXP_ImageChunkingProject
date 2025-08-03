@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, ExternalLink, Eye, Download, Filter } from 'lucide-react';
 import { ImagePreviewModal } from '../../common/ImagePreviewModal';
+import { Portal } from '../../common/Portal';
 
 interface DataPoint {
   dimensions: Record<string, any>;
@@ -324,42 +325,31 @@ export const DataViewer: React.FC<DataViewerProps> = ({
     top: centerPosition.y,
     width: centerPosition.width,
     maxHeight: centerPosition.height,
-    zIndex: 1000,
+    zIndex: 9999, // Ensure it appears above all dashboard content including fullscreen mode
   };
 
-  // Handle click outside to close
-  useEffect(() => {
-    if (!isVisible) return;
-    
-    const handleClickOutside = (event: MouseEvent) => {
-      const target = event.target as Element;
-      const modal = document.querySelector('[data-modal="data-viewer"]');
-      
-      if (modal && !modal.contains(target)) {
-        onClose();
-      }
-    };
-    
-    // Add event listener after a brief delay to prevent immediate closure
-    const timeoutId = setTimeout(() => {
-      document.addEventListener('mousedown', handleClickOutside);
-    }, 100);
-    
-    return () => {
-      clearTimeout(timeoutId);
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [isVisible, onClose]);
+  // Handle click on backdrop only
+  const handleBackdropClick = (event: React.MouseEvent) => {
+    // Only close if clicking directly on the backdrop
+    if (event.target === event.currentTarget) {
+      onClose();
+    }
+  };
   
   // Early return after all hooks
   if (!isVisible || !data.length) return null;
   
   return (
-    <div 
-      data-modal="data-viewer"
-      style={viewerStyle}
-      className="bg-white border border-gray-300 rounded-lg shadow-lg overflow-hidden flex flex-col"
-    >
+    <Portal>
+      <div 
+        className="fixed inset-0 bg-black bg-opacity-50 z-[9998]"
+        onClick={handleBackdropClick}
+      />
+      <div 
+        data-modal="data-viewer"
+        style={viewerStyle}
+        className="bg-white border border-gray-300 rounded-lg shadow-lg overflow-hidden flex flex-col"
+      >
       {/* Header */}
       <div className="bg-gray-50 px-4 py-3 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
         <div>
@@ -579,6 +569,7 @@ export const DataViewer: React.FC<DataViewerProps> = ({
         title={config.measures.length > 0 ? config.measures[0].displayName : "Observation Image Preview"}
         initialIndex={imageModalStartIndex}
       />
-    </div>
+      </div>
+    </Portal>
   );
 };

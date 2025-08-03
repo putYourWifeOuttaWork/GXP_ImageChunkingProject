@@ -7,7 +7,8 @@ import {
   DashboardVersion,
   DashboardComment,
   DashboardCollaborator,
-  DashboardPermissions
+  DashboardPermissions,
+  DashboardLayout
 } from '../types/reporting/dashboardTypes';
 
 // Helper function to convert snake_case to camelCase
@@ -50,6 +51,7 @@ export class DashboardService {
   static async createDashboard(
     name: string,
     description: string,
+    layout?: DashboardLayout,
     templateId?: string
   ): Promise<{ data: Dashboard | null; error: any }> {
     try {
@@ -72,7 +74,7 @@ export class DashboardService {
           description,
           company_id: user.company_id,
           created_by: userData.user.id,
-          layout_config: {
+          layout_config: layout || {
             type: 'grid',
             columns: 12,
             rows: 8,

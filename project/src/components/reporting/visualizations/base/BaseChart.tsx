@@ -28,6 +28,9 @@ interface BaseChartProps {
   onSeriesToggle?: (seriesId: string, visible: boolean) => void;
   onDataSelect?: (data: any[], position: { x: number; y: number }, title: string) => void;
   dimensions?: any[];
+  onViewportChange?: (viewport: { scale: number; panX: number; panY: number }) => void;
+  onSettingsChange?: (settings: Partial<VisualizationSettings>) => void;
+  onContextMenu?: (e: React.MouseEvent) => void;
 }
 
 // Helper function to detect if a field contains date data
@@ -506,11 +509,22 @@ export const BaseChart: React.FC<BaseChartProps> = ({
   className = '',
   onSeriesToggle,
   onDataSelect,
-  dimensions: dimensionConfigs
+  dimensions: dimensionConfigs,
+  onViewportChange,
+  onSettingsChange,
+  onContextMenu
 }) => {
-  console.log('BaseChart rendering with margins fix v2 - right margin should be 180px');
+  console.log('BaseChart rendering with settings:', {
+    chartType,
+    settings,
+    colorPalette: settings?.colors?.palette,
+    hasColors: !!settings?.colors,
+    className
+  });
   
   // Extract the actual values we need with defaults
+  // For dashboard widgets, use the provided dimensions directly
+  const isDashboardWidget = className?.includes('dashboard-widget-chart');
   const dimensions = settings?.dimensions || { width: 800, height: 400 };
   const margins = settings?.margins || settings?.dimensions?.margin || { top: 50, right: 120, bottom: 60, left: 65 };
   const colors = settings?.colors?.palette || ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#06B6D4', '#84CC16'];
@@ -525,15 +539,193 @@ export const BaseChart: React.FC<BaseChartProps> = ({
   const [showZeroValues, setShowZeroValues] = useState(false);
   const [hasPositiveAndNegative, setHasPositiveAndNegative] = useState(false);
   
-  // Pan and zoom state - start zoomed out to show more data
+  // Pan and zoom state - start from saved viewport or calculate based on container size
+  const savedViewport = settings.viewport;
+  
+  // Calculate initial scale based on container width and context
+  // For small containers (dashboards), zoom out more to fit content
+  const calculateInitialScale = () => {
+    if (savedViewport?.scale && !savedViewport?.autoFit) return savedViewport.scale;
+    
+    // Check if we're in dashboard mode
+    const isDashboardWidget = className?.includes('dashboard-widget-chart');
+    
+    // Dashboard widgets should start more zoomed out to show all data
+    if (isDashboardWidget) {
+      if (dimensions.width < 300) {
+        return 0.4; // 40% for tiny dashboard widgets
+      } else if (dimensions.width < 500) {
+        return 0.5; // 50% for small dashboard widgets
+      } else {
+        return 0.6; // 60% for larger dashboard widgets
+      }
+    }
+    
+    // Regular charts
+    if (dimensions.width < 400) {
+      return 0.5; // 50% for very small widgets
+    } else if (dimensions.width < 600) {
+      return 0.6; // 60% for medium widgets
+    } else if (dimensions.width < 800) {
+      return 0.7; // 70% for larger widgets
+    }
+    return 0.8; // 80% for full-size charts
+  };
+  
+  const initialScale = calculateInitialScale();
+  const [scale, setScale] = useState(initialScale);
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
-  const [scale, setScale] = useState(0.6); // Start at 60% to show all data
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   
-  // Debug logging for pan/zoom state changes
+  // Calculate svgHeight here so it's available for fitToData
+  const titleSpace = chartType === 'heatmap' ? 0 : 0;
+  const baseHeight = (hasPositiveAndNegative && ['line', 'area', 'bar'].includes(chartType)) 
+    ? dimensions.height * 1.5 
+    : dimensions.height;
+  const svgHeight = baseHeight + titleSpace;
+  
+  // Function to fit chart to container
+  const fitToData = useCallback(() => {
+    if (!data || dimensions.width <= 0 || svgHeight <= 0) return;
+    
+    const isDashboardWidget = className?.includes('dashboard-widget-chart');
+    
+    // For dashboard widgets, use container dimensions as the target
+    // For regular charts, use the SVG dimensions
+    const containerWidth = dimensions.width;
+    const containerHeight = dimensions.height;
+    
+    // The chart's natural size
+    const chartWidth = settings?.dimensions?.width || dimensions.width;
+    const chartHeight = settings?.dimensions?.height || svgHeight;
+    
+    // Add padding to ensure nothing is clipped
+    const padding = isDashboardWidget ? 15 : 25;
+    const targetWidth = containerWidth - padding * 2;
+    const targetHeight = containerHeight - padding * 2;
+    
+    // Calculate scale to fit the chart in the container
+    const scaleX = targetWidth / chartWidth;
+    const scaleY = targetHeight / chartHeight;
+    
+    // Use the smaller scale to ensure everything fits
+    let optimalScale = Math.min(scaleX, scaleY);
+    
+    // Apply a safety factor to ensure all elements are visible
+    optimalScale = optimalScale * 0.95;
+    
+    // Set bounds - don't over-scale or under-scale
+    const minScale = 0.3;
+    const maxScale = 1.2;
+    optimalScale = Math.min(maxScale, Math.max(minScale, optimalScale));
+    
+    console.log('Fit to data:', {
+      container: { width: containerWidth, height: containerHeight },
+      chart: { width: chartWidth, height: chartHeight },
+      target: { width: targetWidth, height: targetHeight },
+      scales: { x: scaleX, y: scaleY, optimal: optimalScale }
+    });
+    
+    setScale(optimalScale);
+    
+    // Position the scaled content
+    const scaledWidth = chartWidth * optimalScale;
+    const scaledHeight = chartHeight * optimalScale;
+    
+    // Align to left with small padding, center vertically
+    const offsetX = padding;
+    const offsetY = (containerHeight - scaledHeight) / 2;
+    
+    setPanOffset({ 
+      x: Math.max(0, offsetX), 
+      y: Math.max(0, offsetY) 
+    });
+  }, [data, dimensions.width, dimensions.height, svgHeight, className, settings]);
+  
+  // Debug logging for pan/zoom state changes and notify parent
   useEffect(() => {
     console.log('Pan/Zoom state changed:', { panOffset, scale });
-  }, [panOffset, scale]);
+    
+    // Notify parent about viewport changes (with percentage-based pan)
+    if (onViewportChange && dimensions.width > 0 && dimensions.height > 0) {
+      const timeoutId = setTimeout(() => {
+        onViewportChange({
+          scale,
+          panX: panOffset.x / dimensions.width, // Convert to percentage
+          panY: panOffset.y / dimensions.height  // Convert to percentage
+        });
+      }, 500); // Debounce to avoid too many updates
+      
+      return () => clearTimeout(timeoutId);
+    }
+  }, [panOffset, scale, onViewportChange, dimensions.width, dimensions.height]);
+  
+  // Set initial position from saved viewport or calculate centered position
+  useEffect(() => {
+    console.log('BaseChart viewport initialization:', {
+      hasSavedViewport: !!savedViewport,
+      savedViewport,
+      dimensions: { width: dimensions.width, height: dimensions.height },
+      className
+    });
+    
+    if (dimensions.width > 0 && dimensions.height > 0) {
+      if (savedViewport && savedViewport.panX !== undefined && savedViewport.panY !== undefined && savedViewport.scale !== undefined) {
+        // Restore saved position as percentage of container size
+        const offsetX = dimensions.width * savedViewport.panX;
+        const offsetY = dimensions.height * savedViewport.panY;
+        console.log('Restoring saved viewport:', {
+          scale: savedViewport.scale,
+          panX: savedViewport.panX,
+          panY: savedViewport.panY,
+          offsetX,
+          offsetY,
+          autoFit: savedViewport.autoFit
+        });
+        setPanOffset({ x: offsetX, y: offsetY });
+        setScale(savedViewport.scale);
+        
+        // If autoFit is explicitly true, still fit to data after restoring position
+        if (savedViewport.autoFit === true && data) {
+          setTimeout(() => {
+            console.log('Auto-fitting chart (autoFit=true in saved viewport)');
+            fitToData();
+          }, 500);
+        }
+      } else if (data) {
+        // No saved viewport, so auto-fit on initial load
+        setTimeout(() => {
+          console.log('Auto-fitting chart on initial load (no saved viewport):', { 
+            width: dimensions.width,
+            height: dimensions.height,
+            hasData: !!data,
+            className 
+          });
+          fitToData();
+        }, 500); // Delay to ensure SVG is fully rendered
+      }
+    }
+  }, [dimensions.width, dimensions.height]); // Only depend on dimension changes, not data
+  
+  // Auto-fit when data changes ONLY if user hasn't saved a specific viewport
+  useEffect(() => {
+    // Only auto-fit if:
+    // 1. We have data and valid dimensions
+    // 2. AND either no saved viewport exists OR autoFit is explicitly true
+    if (data && dimensions.width > 0 && dimensions.height > 0) {
+      const shouldAutoFit = !savedViewport || savedViewport.autoFit === true;
+      
+      if (shouldAutoFit) {
+        // Small delay to ensure chart has re-rendered with new data
+        const timeoutId = setTimeout(() => {
+          console.log('Auto-fitting chart after data change (autoFit enabled)');
+          fitToData();
+        }, 300);
+        
+        return () => clearTimeout(timeoutId);
+      }
+    }
+  }, [data, savedViewport?.autoFit]); // Depend on data and autoFit setting
   
   // Handle wheel events with passive: false to allow preventDefault
   useEffect(() => {
@@ -562,10 +754,10 @@ export const BaseChart: React.FC<BaseChartProps> = ({
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
         
-        // Adjust pan to keep zoom centered on cursor
-        const scaleDiff = newScale - scale;
-        const newPanX = panOffset.x - (x - rect.width / 2) * scaleDiff;
-        const newPanY = panOffset.y - (y - rect.height / 2) * scaleDiff;
+        // Adjust pan to keep zoom centered on cursor (with top-left origin)
+        const scaleDiff = newScale / scale;
+        const newPanX = x - (x - panOffset.x) * scaleDiff;
+        const newPanY = y - (y - panOffset.y) * scaleDiff;
         
         setScale(newScale);
         setPanOffset({ x: newPanX, y: newPanY });
@@ -3039,6 +3231,7 @@ export const BaseChart: React.FC<BaseChartProps> = ({
     const adjustedTopMargin = chartType === 'heatmap' ? margin.top : margin.top;
     const g = svg
       .append('g')
+      .attr('class', 'chart-content')
       .attr('transform', `translate(${margin.left},${margin.top})`);
 
     // Add a subtle zero line when chart contains positive and negative values
@@ -3153,13 +3346,7 @@ export const BaseChart: React.FC<BaseChartProps> = ({
 
   }, [data, settings, chartType, seriesData, legendItems, handleSeriesToggle, hasPositiveAndNegative]);
 
-  // Calculate adjusted height for the SVG
-  // Add extra height to accommodate titles positioned above margins
-  const titleSpace = chartType === 'heatmap' ? 0 : 0; // Title space now handled in margin.top
-  const baseHeight = (hasPositiveAndNegative && ['line', 'area', 'bar'].includes(chartType)) 
-    ? dimensions.height * 1.5 
-    : dimensions.height;
-  const svgHeight = baseHeight + titleSpace;
+  // SVG height is already calculated above for use in fitToData
 
   return (
     <div 
@@ -3167,16 +3354,24 @@ export const BaseChart: React.FC<BaseChartProps> = ({
       className={`d3-chart-container ${className}`}
       style={{
         backgroundColor: '#ffffff',
-        borderRadius: '8px',
-        boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06)',
-        border: '1px solid #e5e7eb',
-        padding: '16px',
+        borderRadius: isDashboardWidget ? '0' : '8px',
+        boxShadow: isDashboardWidget ? 'none' : '0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06)',
+        border: isDashboardWidget ? 'none' : '1px solid #e5e7eb',
+        padding: isDashboardWidget ? '8px' : '16px',
         position: 'relative',
-        overflow: 'hidden' // Container should not overflow
+        overflow: 'hidden', // Container should not overflow
+        width: '100%',
+        height: '100%'
+      }}
+      onContextMenu={(e) => {
+        if (isDashboardWidget && onContextMenu) {
+          e.preventDefault();
+          onContextMenu(e);
+        }
       }}
     >
-      {/* Help text when chart is pannable */}
-      {(dimensions.width > 800 || svgHeight > 500) && (
+      {/* Help text when chart is pannable - Hide in dashboard view */}
+      {(dimensions.width > 800 || svgHeight > 500) && !className?.includes('dashboard-widget-chart') && (
         <div
           style={{
             position: 'absolute',
@@ -3200,26 +3395,20 @@ export const BaseChart: React.FC<BaseChartProps> = ({
         </div>
       )}
       
-      {/* Zoom/Pan controls */}
-      <div
-        style={{
-          position: 'absolute',
-          top: '10px',
-          right: '10px',
-          display: 'flex',
-          gap: '8px',
-          zIndex: 20
-        }}
-      >
-        <button
-          onClick={() => {
-            // Calculate optimal scale and pan to fit all data
-            if (data && dimensions.width > 0 && svgHeight > 0) {
-              // For now, just zoom out to 60% like in the desired screenshot
-              setScale(0.6);
-              setPanOffset({ x: 0, y: 0 });
-            }
+      {/* Zoom/Pan controls - Always show */}
+      {(
+        <div
+          style={{
+            position: 'absolute',
+            top: '10px',
+            right: '10px',
+            display: 'flex',
+            gap: '8px',
+            zIndex: 20
           }}
+        >
+        <button
+          onClick={fitToData}
           style={{
             padding: '4px 8px',
             backgroundColor: '#10B981',
@@ -3268,6 +3457,7 @@ export const BaseChart: React.FC<BaseChartProps> = ({
           </>
         )}
       </div>
+      )}
       <div 
         ref={scrollContainerRef}
         onMouseEnter={() => {
@@ -3301,7 +3491,7 @@ export const BaseChart: React.FC<BaseChartProps> = ({
             height: svgHeight,
             position: 'relative',
             transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${scale})`,
-            transformOrigin: 'center',
+            transformOrigin: 'top left',
             transition: 'transform 0.1s ease-out',
             pointerEvents: 'auto'
           }}

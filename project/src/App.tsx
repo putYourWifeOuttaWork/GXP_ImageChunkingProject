@@ -42,6 +42,8 @@ const TestFacilityMapPage = lazy(() => import('./pages/TestFacilityMapPage'));
 const EnhancedFacilityMapPage = lazy(() => import('./pages/EnhancedFacilityMapPage'));
 const ModalFacilityMapPage = lazy(() => import('./pages/ModalFacilityMapPage'));
 const SimpleFacilityBuilder = lazy(() => import('./pages/SimpleFacilityBuilder'));
+const ReportBuilderTestPage = lazy(() => import('./pages/ReportBuilderTestPage'));
+const TableVisualizationDebug = lazy(() => import('./components/reporting/debug/TableVisualizationDebug'));
 
 function App() {
   const navigate = useNavigate();
@@ -461,6 +463,16 @@ function App() {
               <Route path="/facility-builder" element={
                 <Suspense fallback={<LoadingScreen />}>
                   <SimpleFacilityBuilder />
+                </Suspense>
+              } />
+              <Route path="/report-test" element={
+                <Suspense fallback={<LoadingScreen />}>
+                  <ReportBuilderTestPage />
+                </Suspense>
+              } />
+              <Route path="/table-debug" element={
+                <Suspense fallback={<LoadingScreen />}>
+                  <TableVisualizationDebug />
                 </Suspense>
               } />
             </Route>

@@ -478,17 +478,27 @@ export const RichTextWidget: React.FC<RichTextWidgetProps> = ({
     <div 
       className={`h-full relative group ${isEditMode ? 'cursor-pointer' : ''}`}
       onClick={() => isEditMode && setIsEditing(true)}
+      style={{ minHeight: '40px' }}
     >
       {content ? (
         <div
-          className="h-full overflow-auto p-4"
+          className="h-full overflow-auto p-2"
           style={{
             fontSize: '14px',
             lineHeight: '1.6',
-            color: '#374151'
+            color: '#374151',
+            minHeight: '100%'
           }}
-          dangerouslySetInnerHTML={{ __html: content }}
-        />
+        >
+          <div 
+            className="rich-text-widget-content"
+            dangerouslySetInnerHTML={{ __html: content }} 
+            style={{
+              wordBreak: 'break-word',
+              overflowWrap: 'anywhere'
+            }}
+          />
+        </div>
       ) : (
         <div className="h-full flex items-center justify-center text-gray-400">
           <div className="text-center">

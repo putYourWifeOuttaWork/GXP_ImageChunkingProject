@@ -38,7 +38,7 @@ export interface DashboardLayout {
 
 export interface DashboardWidget {
   id: string;
-  type: 'report' | 'text' | 'image' | 'metric' | 'iframe' | 'custom';
+  type: 'report' | 'text' | 'image' | 'metric' | 'facility' | 'iframe' | 'custom';
   reportId?: string;
   
   // Position and size
@@ -72,6 +72,14 @@ export interface DashboardWidget {
 }
 
 export interface WidgetConfiguration {
+  // Viewport settings (zoom/pan state)
+  viewport?: {
+    scale: number;
+    panX: number;
+    panY: number;
+    autoFit?: boolean;
+  };
+  
   // Report widget
   reportConfiguration?: {
     showFilters: boolean;

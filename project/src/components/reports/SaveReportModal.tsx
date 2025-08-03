@@ -225,7 +225,7 @@ export function SaveReportModal({
         measures: reportConfig.measures || [],
         filters: reportConfig.filters || [],
         selectedSegments: reportConfig.selectedSegments || [],
-        visualization: reportConfig.visualizationSettings || {},
+        visualizationSettings: reportConfig.visualizationSettings || {},
         chartType: reportConfig.chartType || 'line'
       };
 

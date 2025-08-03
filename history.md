@@ -102,3 +102,5 @@ check check it through
 
 ### 2025-07-23T09:24:16.433080
 As a user, I used to be able to go to the report builder, build a report, and then start working with it, like, for example, using the brush to drill into a specific record, and then return to the report without losing my progress. This application has an automatic refresh. Another reason is for reasons that you don't need to worry about too much right now, but the automatic refresh is there across the application. When every application comes back into focus after having lost focus, it will refresh the page in order to ensure that all resources from the browser are dedicated to the page. So that requires caching in the report builder to ensure that what we see on the report builder is persisted after a refresh unless the reset button on the top of the report builder page is pressed, in which case it will clear this subcache. Can we please add this caching back to the report builder?
+
+### 2025-08-03T11:32:48.666010

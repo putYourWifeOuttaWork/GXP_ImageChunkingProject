@@ -2,6 +2,67 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Rich Text Widget Styles */
+.rich-text-widget-content h1 { 
+  font-size: 1.5em; 
+  font-weight: bold; 
+  margin: 0.5em 0; 
+}
+.rich-text-widget-content h2 { 
+  font-size: 1.3em; 
+  font-weight: bold; 
+  margin: 0.4em 0; 
+}
+.rich-text-widget-content h3 { 
+  font-size: 1.1em; 
+  font-weight: bold; 
+  margin: 0.3em 0; 
+}
+.rich-text-widget-content p { 
+  margin: 0.5em 0; 
+}
+.rich-text-widget-content ul, 
+.rich-text-widget-content ol { 
+  margin: 0.5em 0; 
+  padding-left: 1.5em; 
+}
+.rich-text-widget-content li { 
+  margin: 0.2em 0; 
+}
+.rich-text-widget-content blockquote { 
+  border-left: 3px solid #e5e7eb; 
+  padding-left: 1em; 
+  margin: 0.5em 0; 
+}
+.rich-text-widget-content pre { 
+  background: #f3f4f6; 
+  padding: 0.5em; 
+  border-radius: 0.25em; 
+  overflow-x: auto; 
+}
+.rich-text-widget-content code { 
+  background: #f3f4f6; 
+  padding: 0.1em 0.3em; 
+  border-radius: 0.2em; 
+  font-family: monospace;
+}
+.rich-text-widget-content a { 
+  color: #3b82f6; 
+  text-decoration: underline; 
+}
+.rich-text-widget-content a:hover { 
+  color: #2563eb; 
+}
+.rich-text-widget-content strong { 
+  font-weight: bold; 
+}
+.rich-text-widget-content em { 
+  font-style: italic; 
+}
+.rich-text-widget-content u {
+  text-decoration: underline;
+}
+
 @layer base {
   html {
     font-family: 'Inter', system-ui, sans-serif;
@@ -156,4 +217,16 @@
 .Toastify__toast--error {
   background-color: #fee2e2;
   color: #b91c1c;
+}
+
+/* Portal Root - Ensure modals appear above all content */
+#portal-root {
+  position: relative;
+  z-index: 10000;
+}
+
+/* Ensure modals in portal have proper stacking */
+#portal-root > * {
+  position: relative;
+  z-index: 10000;
 }

@@ -184,11 +184,41 @@ const SimpleFacilityBuilder: React.FC = () => {
     }
   }, [selectedSiteId]);
 
+  // Helper function to generate meaningful labels for equipment
+  const generateDefaultLabel = (type: string, equipmentId: string): string => {
+    // Extract a short identifier from the equipment_id if possible
+    const idParts = equipmentId.split('-');
+    const shortId = idParts.length > 1 ? idParts[idParts.length - 1].substring(0, 4) : equipmentId.substring(0, 4);
+    
+    // Generate type-specific labels
+    switch (type) {
+      case 'petri_dish':
+        return `P${shortId}`;
+      case 'gasifier':
+        return `G${shortId}`;
+      case 'sensor':
+        return `S${shortId}`;
+      case 'vent':
+        return `V${shortId}`;
+      case 'shelving':
+        return `Shelf${shortId}`;
+      case 'door':
+        return `Door${shortId}`;
+      case 'fan':
+        return `Fan${shortId}`;
+      default:
+        return `${type}_${shortId}`;
+    }
+  };
+
   const loadFacilityData = async (siteId: string) => {
     // Try to load from cache first
     if (loadFromCache(siteId)) {
+      console.log('[LOAD FACILITY DATA - LOADED FROM CACHE]', { siteId });
       return; // Successfully loaded from cache
     }
+    
+    console.log('[LOAD FACILITY DATA - START]', { siteId });
     
     try {
       const { data: siteData, error } = await supabase
@@ -197,7 +227,16 @@ const SimpleFacilityBuilder: React.FC = () => {
         .eq('site_id', siteId)
         .single();
 
-      if (error) throw error;
+      if (error) {
+        console.error('[LOAD FACILITY DATA - QUERY ERROR]', error);
+        throw error;
+      }
+      
+      console.log('[LOAD FACILITY DATA - RAW DATA]', {
+        site_id: siteData.site_id,
+        has_facility_layout: !!siteData.facility_layout,
+        facility_layout: siteData.facility_layout
+      });
 
       // Parse equipment from various JSONB columns
       const equipment: Equipment[] = [];
@@ -209,7 +248,7 @@ const SimpleFacilityBuilder: React.FC = () => {
             equipment.push({
               equipment_id: petri.petri_code,
               type: 'petri_dish',
-              label: petri.petri_code,
+              label: petri.label || petri.petri_code,  // Use saved label if available
               x: petri.x_position || 0,
               y: petri.y_position || 0,
               z: 0,
@@ -235,7 +274,7 @@ const SimpleFacilityBuilder: React.FC = () => {
             equipment.push({
               equipment_id: gasifier.gasifier_code,
               type: 'gasifier',
-              label: gasifier.gasifier_code,
+              label: gasifier.label || gasifier.gasifier_code,  // Use saved label if available
               x: gasifier.footage_from_origin_x || 0,
               y: gasifier.footage_from_origin_y || 0,
               z: 0,
@@ -256,7 +295,7 @@ const SimpleFacilityBuilder: React.FC = () => {
           equipment.push({
             equipment_id: door.door_id || `door-${index}`,
             type: 'door',
-            label: door.door_id || `Door ${index + 1}`,
+            label: door.label || door.door_id || `Door ${index + 1}`,  // Use saved label if available
             x: door.position?.x || 0,
             y: door.position?.y || 0,
             z: 0,
@@ -274,7 +313,7 @@ const SimpleFacilityBuilder: React.FC = () => {
             equipment.push({
               equipment_id: fan.fanId,
               type: 'fan',
-              label: fan.fanId,
+              label: fan.label || fan.fanId,  // Use saved label if available
               x: fan.directionality?.origin_point?.x || 0,
               y: fan.directionality?.origin_point?.y || 0,
               z: 0,
@@ -290,20 +329,57 @@ const SimpleFacilityBuilder: React.FC = () => {
       if (siteData.facility_layout && siteData.facility_layout.equipment) {
         // This would be our saved layout data
         const layoutEquipment = siteData.facility_layout.equipment;
+        console.log('[FACILITY LAYOUT LOAD]', {
+          layoutExists: true,
+          equipmentCount: layoutEquipment.length,
+          equipmentTypes: layoutEquipment.map((e: any) => ({ 
+            id: e.equipment_id, 
+            type: e.type,
+            hasConfig: !!e.config
+          }))
+        });
+        
         layoutEquipment.forEach((layoutEq: any) => {
           const existingEq = equipment.find(eq => eq.equipment_id === layoutEq.equipment_id);
           if (existingEq) {
-            // Update positions for existing equipment
+            // Update positions and config for existing equipment
             existingEq.x = layoutEq.x;
             existingEq.y = layoutEq.y;
+            existingEq.z = layoutEq.z || existingEq.z;
+            
+            // Update label if it exists in the layout
+            if (layoutEq.label) {
+              console.log('[UPDATING LABEL]', {
+                equipment_id: existingEq.equipment_id,
+                type: existingEq.type,
+                oldLabel: existingEq.label,
+                newLabel: layoutEq.label
+              });
+              existingEq.label = layoutEq.label;
+            }
+            
+            // Update config if it exists in the layout
+            if (layoutEq.config) {
+              existingEq.config = { ...existingEq.config, ...layoutEq.config };
+            }
           } else {
             // Add equipment that doesn't have specialized columns (like shelving, vents, sensors)
             // These are only stored in facility_layout
             if (['shelving', 'vent', 'sensor'].includes(layoutEq.type)) {
+              console.log('[LOADING SHELVING/VENT/SENSOR]', {
+                equipment_id: layoutEq.equipment_id,
+                type: layoutEq.type,
+                label: layoutEq.label,
+                hasLabel: !!layoutEq.label,
+                willUseLabel: layoutEq.label || generateDefaultLabel(layoutEq.type, layoutEq.equipment_id),
+                position: { x: layoutEq.x, y: layoutEq.y },
+                config: layoutEq.config
+              });
+              
               equipment.push({
                 equipment_id: layoutEq.equipment_id,
                 type: layoutEq.type,
-                label: layoutEq.label || layoutEq.equipment_id,
+                label: layoutEq.label || generateDefaultLabel(layoutEq.type, layoutEq.equipment_id),
                 x: layoutEq.x || 0,
                 y: layoutEq.y || 0,
                 z: layoutEq.z || 0,
@@ -351,6 +427,19 @@ const SimpleFacilityBuilder: React.FC = () => {
         equipment
       };
 
+      // Log final equipment list
+      console.log('[FINAL EQUIPMENT LIST]', {
+        totalCount: equipment.length,
+        shelvingCount: equipment.filter(e => e.type === 'shelving').length,
+        shelvingItems: equipment.filter(e => e.type === 'shelving').map(e => ({
+          id: e.equipment_id,
+          type: e.type,
+          position: { x: e.x, y: e.y },
+          config: e.config
+        })),
+        allTypes: [...new Set(equipment.map(e => e.type))]
+      });
+      
       setFacilityData(facilityData);
       
       // Initialize history with loaded data
@@ -470,6 +559,7 @@ const SimpleFacilityBuilder: React.FC = () => {
         .map(eq => ({
           ...eq.config,
           petri_code: eq.equipment_id,
+          label: eq.label,  // Include the label
           x_position: eq.x,
           y_position: eq.y
         }));
@@ -479,6 +569,7 @@ const SimpleFacilityBuilder: React.FC = () => {
         .map(eq => ({
           ...eq.config,
           gasifier_code: eq.equipment_id,
+          label: eq.label,  // Include the label
           footage_from_origin_x: eq.x,
           footage_from_origin_y: eq.y
         }));
@@ -488,6 +579,7 @@ const SimpleFacilityBuilder: React.FC = () => {
         .map(eq => ({
           ...eq.config,
           door_id: eq.equipment_id,
+          label: eq.label,  // Include the label
           position: { x: eq.x, y: eq.y }
         }));
 
@@ -496,6 +588,7 @@ const SimpleFacilityBuilder: React.FC = () => {
         .map(eq => ({
           ...eq.config,
           fanId: eq.equipment_id,
+          label: eq.label,  // Include the label
           directionality: {
             ...eq.config.directionality,
             origin_point: { x: eq.x, y: eq.y }
@@ -504,6 +597,29 @@ const SimpleFacilityBuilder: React.FC = () => {
 
       // Save a complete layout snapshot with ALL equipment types
       // This is crucial for equipment types that don't have specialized columns (shelving, vents, sensors)
+      const shelvingEquipment = facilityData.equipment.filter(eq => eq.type === 'shelving');
+      console.log('[SAVE LAYOUT - SHELVING CHECK]', {
+        totalEquipment: facilityData.equipment.length,
+        shelvingCount: shelvingEquipment.length,
+        shelvingDetails: shelvingEquipment.map(s => ({
+          id: s.equipment_id,
+          type: s.type,
+          position: { x: s.x, y: s.y },
+          config: s.config
+        }))
+      });
+      
+      // Log equipment labels before saving
+      console.log('[SAVE LAYOUT - EQUIPMENT LABELS]', {
+        equipmentCount: facilityData.equipment.length,
+        equipmentLabels: facilityData.equipment.map(eq => ({
+          id: eq.equipment_id,
+          type: eq.type,
+          label: eq.label,
+          hasLabel: !!eq.label
+        }))
+      });
+      
       const layoutToSave = {
         equipment: facilityData.equipment,
         lastModified: new Date().toISOString(),
@@ -523,12 +639,27 @@ const SimpleFacilityBuilder: React.FC = () => {
       if (doorDetails.length > 0) updateData.door_details = doorDetails;
       if (fanDetails.length > 0) updateData.fan_details = fanDetails;
 
+      console.log('[SAVE LAYOUT - UPDATE DATA]', {
+        site_id: selectedSiteId,
+        facility_layout_equipment_count: updateData.facility_layout?.equipment?.length,
+        facility_layout_shelving: updateData.facility_layout?.equipment?.filter((e: any) => e.type === 'shelving'),
+        updateDataKeys: Object.keys(updateData)
+      });
+
       const { error } = await supabase
         .from('sites')
         .update(updateData)
         .eq('site_id', selectedSiteId);
 
-      if (error) throw error;
+      if (error) {
+        console.error('[SAVE LAYOUT - ERROR]', error);
+        throw error;
+      }
+
+      console.log('[SAVE LAYOUT - SUCCESS]', {
+        site_id: selectedSiteId,
+        saved_at: new Date().toISOString()
+      });
 
       // Clear cache after successful save
       clearCache();
@@ -676,10 +807,11 @@ const SimpleFacilityBuilder: React.FC = () => {
       };
     }
 
+    const equipmentId = `${selectedTool}-${Date.now()}`;
     const newEquipment: Equipment = {
-      equipment_id: `${selectedTool}-${Date.now()}`,
+      equipment_id: equipmentId,
       type: selectedTool as any,
-      label: `New ${selectedTool.replace('_', ' ')}`,
+      label: generateDefaultLabel(selectedTool, equipmentId),
       x,
       y,
       z: 0,

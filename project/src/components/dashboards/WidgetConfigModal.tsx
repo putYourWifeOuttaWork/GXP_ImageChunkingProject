@@ -6,6 +6,7 @@ import Button from '../common/Button';
 import { supabase } from '../../lib/supabaseClient';
 import { IsolationFilterSelect } from './IsolationFilterSelect';
 import { ChartSettingsPanel } from '../reporting/builder/ChartSettingsPanel';
+import { Portal } from '../common/Portal';
 
 interface WidgetConfigModalProps {
   isOpen: boolean;
@@ -46,6 +47,19 @@ export const WidgetConfigModal: React.FC<WidgetConfigModalProps> = ({
   const [textContent, setTextContent] = useState('');
   const [textFontSize, setTextFontSize] = useState(14);
   const [textAlignment, setTextAlignment] = useState<'left' | 'center' | 'right' | 'justify'>('left');
+  
+  // Image widget specific state
+  const [imageSrc, setImageSrc] = useState('');
+  const [imageAlt, setImageAlt] = useState('');
+  const [imageFit, setImageFit] = useState<'contain' | 'cover' | 'fill' | 'scale-down'>('contain');
+  
+  // Facility widget specific state
+  const [facilitySiteId, setFacilitySiteId] = useState<string | null>(null);
+  const [facilityShowDatePicker, setFacilityShowDatePicker] = useState(true);
+  const [facilityShowSiteSelector, setFacilityShowSiteSelector] = useState(true);
+  const [facilityShowLegend, setFacilityShowLegend] = useState(true);
+  const [facilityShowStats, setFacilityShowStats] = useState(true);
+  const [availableSites, setAvailableSites] = useState<any[]>([]);
 
   useEffect(() => {
     // Initialize report widget configuration
@@ -81,6 +95,24 @@ export const WidgetConfigModal: React.FC<WidgetConfigModalProps> = ({
       setTextAlignment(textConfig.alignment || 'left');
     }
     
+    // Initialize image widget configuration
+    if (widget.type === 'image' && widget.configuration?.imageConfiguration) {
+      const imageConfig = widget.configuration.imageConfiguration;
+      setImageSrc(imageConfig.src || '');
+      setImageAlt(imageConfig.alt || '');
+      setImageFit(imageConfig.fit || 'contain');
+    }
+    
+    // Initialize facility widget configuration
+    if (widget.type === 'facility' && widget.configuration?.facilityConfiguration) {
+      const facilityConfig = widget.configuration.facilityConfiguration;
+      setFacilitySiteId(facilityConfig.siteId || null);
+      setFacilityShowDatePicker(facilityConfig.showDatePicker ?? true);
+      setFacilityShowSiteSelector(facilityConfig.showSiteSelector ?? true);
+      setFacilityShowLegend(facilityConfig.showLegend ?? true);
+      setFacilityShowStats(facilityConfig.showStats ?? true);
+    }
+    
     // Load report configuration to get available filters
     if (widget.reportId) {
       loadReportConfig();
@@ -89,6 +121,11 @@ export const WidgetConfigModal: React.FC<WidgetConfigModalProps> = ({
     // Load available reports for metric widget
     if (widget.type === 'metric') {
       loadAvailableReports();
+    }
+    
+    // Load available sites for facility widget
+    if (widget.type === 'facility') {
+      loadAvailableSites();
     }
   }, [widget]);
 
@@ -183,6 +220,20 @@ export const WidgetConfigModal: React.FC<WidgetConfigModalProps> = ({
       }
     }
   };
+  
+  const loadAvailableSites = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('sites')
+        .select('site_id, site_name, description')
+        .order('site_name');
+        
+      if (error) throw error;
+      setAvailableSites(data || []);
+    } catch (err) {
+      console.error('Error loading sites:', err);
+    }
+  };
 
   const handleSave = () => {
     let configuration = { ...widget.configuration };
@@ -232,6 +283,27 @@ export const WidgetConfigModal: React.FC<WidgetConfigModalProps> = ({
         markdown: false
       };
     }
+    
+    // Handle image widget configuration
+    else if (widget.type === 'image') {
+      configuration.imageConfiguration = {
+        src: imageSrc,
+        alt: imageAlt,
+        fit: imageFit,
+        alignment: 'center'
+      };
+    }
+    
+    // Handle facility widget configuration
+    else if (widget.type === 'facility') {
+      configuration.facilityConfiguration = {
+        siteId: facilitySiteId,
+        showDatePicker: facilityShowDatePicker,
+        showSiteSelector: facilityShowSiteSelector,
+        showLegend: facilityShowLegend,
+        showStats: facilityShowStats
+      };
+    }
 
     const updatedWidget: DashboardWidget = {
       ...widget,
@@ -248,7 +320,8 @@ export const WidgetConfigModal: React.FC<WidgetConfigModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <Portal>
+      <div className="fixed inset-0 z-[9999] flex items-center justify-center">
       <div className="fixed inset-0 bg-black bg-opacity-50" onClick={onClose} />
       
       <div className="relative bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] overflow-hidden">
@@ -515,6 +588,171 @@ export const WidgetConfigModal: React.FC<WidgetConfigModalProps> = ({
               </div>
             </div>
           )}
+          
+          {/* Image Widget Settings */}
+          {widget.type === 'image' && (
+            <div>
+              <h3 className="text-lg font-medium mb-4">Image Settings</h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Image URL
+                  </label>
+                  <input
+                    type="text"
+                    value={imageSrc}
+                    onChange={(e) => setImageSrc(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                    placeholder="https://example.com/image.png"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Enter the URL of the image you want to display
+                  </p>
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Alt Text
+                  </label>
+                  <input
+                    type="text"
+                    value={imageAlt}
+                    onChange={(e) => setImageAlt(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                    placeholder="Description of the image"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Describe the image for accessibility
+                  </p>
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Fit Mode
+                  </label>
+                  <select
+                    value={imageFit}
+                    onChange={(e) => setImageFit(e.target.value as any)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                  >
+                    <option value="contain">Contain (Fit inside)</option>
+                    <option value="cover">Cover (Fill widget)</option>
+                    <option value="fill">Fill (Stretch to fit)</option>
+                    <option value="scale-down">Scale Down (Smaller of contain or original)</option>
+                  </select>
+                  <p className="text-xs text-gray-500 mt-1">
+                    How the image should fit within the widget
+                  </p>
+                </div>
+                
+                {imageSrc && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Preview
+                    </label>
+                    <div className="border border-gray-200 rounded-md p-4 bg-gray-50">
+                      <img
+                        src={imageSrc}
+                        alt={imageAlt || 'Preview'}
+                        className="max-w-full max-h-48 mx-auto"
+                        style={{ objectFit: imageFit }}
+                        onError={(e) => {
+                          e.currentTarget.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100"%3E%3Crect width="100" height="100" fill="%23f3f4f6"/%3E%3Ctext x="50" y="50" text-anchor="middle" dy=".3em" fill="%239ca3af" font-family="sans-serif" font-size="14"%3EInvalid Image%3C/text%3E%3C/svg%3E';
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+          
+          {/* Facility Widget Settings */}
+          {widget.type === 'facility' && (
+            <div>
+              <h3 className="text-lg font-medium mb-4">Facility Analytics Settings</h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Default Site
+                  </label>
+                  <select
+                    value={facilitySiteId || ''}
+                    onChange={(e) => setFacilitySiteId(e.target.value || null)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                  >
+                    <option value="">Let user select</option>
+                    {availableSites.map(site => (
+                      <option key={site.site_id} value={site.site_id}>
+                        {site.site_name}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Pre-select a site or allow user to choose
+                  </p>
+                </div>
+                
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-gray-700">
+                    Display Options
+                  </label>
+                  
+                  <div className="flex items-center">
+                    <input
+                      type="checkbox"
+                      id="show-date-picker"
+                      checked={facilityShowDatePicker}
+                      onChange={(e) => setFacilityShowDatePicker(e.target.checked)}
+                      className="mr-2"
+                    />
+                    <label htmlFor="show-date-picker" className="text-sm text-gray-700">
+                      Show date picker
+                    </label>
+                  </div>
+                  
+                  <div className="flex items-center">
+                    <input
+                      type="checkbox"
+                      id="show-site-selector"
+                      checked={facilityShowSiteSelector}
+                      onChange={(e) => setFacilityShowSiteSelector(e.target.checked)}
+                      className="mr-2"
+                    />
+                    <label htmlFor="show-site-selector" className="text-sm text-gray-700">
+                      Show site selector
+                    </label>
+                  </div>
+                  
+                  <div className="flex items-center">
+                    <input
+                      type="checkbox"
+                      id="show-legend"
+                      checked={facilityShowLegend}
+                      onChange={(e) => setFacilityShowLegend(e.target.checked)}
+                      className="mr-2"
+                    />
+                    <label htmlFor="show-legend" className="text-sm text-gray-700">
+                      Show growth index legend
+                    </label>
+                  </div>
+                  
+                  <div className="flex items-center">
+                    <input
+                      type="checkbox"
+                      id="show-stats"
+                      checked={facilityShowStats}
+                      onChange={(e) => setFacilityShowStats(e.target.checked)}
+                      className="mr-2"
+                    />
+                    <label htmlFor="show-stats" className="text-sm text-gray-700">
+                      Show statistics panel
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Chart Settings - Only for report widgets */}
           {widget.type === 'report' && (
@@ -629,6 +867,7 @@ export const WidgetConfigModal: React.FC<WidgetConfigModalProps> = ({
           </Button>
         </div>
       </div>
-    </div>
+      </div>
+    </Portal>
   );
 };

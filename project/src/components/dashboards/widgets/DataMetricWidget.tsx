@@ -3,6 +3,8 @@ import { TrendingUp, TrendingDown, Minus, AlertCircle } from 'lucide-react';
 import { supabase } from '../../../lib/supabaseClient';
 import { ReportingDataService } from '../../../services/reportingDataService';
 import LoadingScreen from '../../common/LoadingScreen';
+import { WidgetSkeleton } from '../WidgetSkeleton';
+import { ErrorDisplay, commonErrorActions, getErrorType } from '../../common/ErrorDisplay';
 
 interface DataMetricWidgetProps {
   reportId?: string;
@@ -214,32 +216,29 @@ export const DataMetricWidget: React.FC<DataMetricWidgetProps> = ({
   };
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <LoadingScreen />
-      </div>
-    );
+    return <WidgetSkeleton type="metric" showTitle={false} />;
   }
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-center text-red-600">
-          <AlertCircle size={48} className="mx-auto mb-2" />
-          <p className="text-sm">{error}</p>
-        </div>
-      </div>
+      <ErrorDisplay
+        type={getErrorType(error)}
+        message={error}
+        actions={[
+          commonErrorActions.retry(loadMetricData)
+        ]}
+      />
     );
   }
 
   if (!reportId) {
     return (
-      <div className="flex items-center justify-center h-full text-gray-400">
-        <div className="text-center">
-          <p className="text-sm">No report selected</p>
-          <p className="text-xs mt-1">Configure this widget to select a report</p>
-        </div>
-      </div>
+      <ErrorDisplay
+        type="configuration-error"
+        title="No Report Selected"
+        message="Please configure this widget to select a report and metric"
+        actions={[]}
+      />
     );
   }
 

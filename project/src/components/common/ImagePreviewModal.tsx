@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, ChevronLeft, ChevronRight, Calendar, MapPin, Tag, Info } from 'lucide-react';
+import { Portal } from './Portal';
 
 interface ImageData {
   url: string | null;
@@ -63,29 +64,13 @@ export const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({
     return () => document.removeEventListener('keydown', handleEscape);
   }, [isVisible, onClose]);
 
-  // Handle click outside
-  useEffect(() => {
-    if (!isVisible) return;
-    
-    const handleClickOutside = (event: MouseEvent) => {
-      const target = event.target as Element;
-      const modal = document.querySelector('[data-modal="image-preview"]');
-      
-      if (modal && !modal.contains(target)) {
-        onClose();
-      }
-    };
-    
-    // Add event listener after a brief delay to prevent immediate closure
-    const timeoutId = setTimeout(() => {
-      document.addEventListener('mousedown', handleClickOutside);
-    }, 100);
-    
-    return () => {
-      clearTimeout(timeoutId);
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [isVisible, onClose]);
+  // Handle click on backdrop only
+  const handleBackdropClick = (event: React.MouseEvent) => {
+    // Only close if clicking directly on the backdrop, not on any child elements
+    if (event.target === event.currentTarget) {
+      onClose();
+    }
+  };
 
   if (!isVisible || !images.length) return null;
 
@@ -100,13 +85,15 @@ export const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({
     imageError
   });
 
-  const handlePrevious = () => {
+  const handlePrevious = (e: React.MouseEvent) => {
+    e.stopPropagation();
     setCurrentIndex((prev) => (prev - 1 + images.length) % images.length);
     setImageLoading(true);
     setImageError(false);
   };
 
-  const handleNext = () => {
+  const handleNext = (e: React.MouseEvent) => {
+    e.stopPropagation();
     setCurrentIndex((prev) => (prev + 1) % images.length);
     setImageLoading(true);
     setImageError(false);
@@ -148,11 +135,16 @@ export const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+    <Portal>
       <div 
-        data-modal="image-preview"
-        className="bg-white rounded-lg shadow-2xl max-w-4xl max-h-[90vh] w-full mx-4 flex flex-col overflow-hidden"
+        className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-[9999]"
+        onClick={handleBackdropClick}
       >
+        <div 
+          data-modal="image-preview"
+          className="bg-white rounded-lg shadow-2xl max-w-4xl max-h-[90vh] w-full mx-4 flex flex-col overflow-hidden"
+          onClick={(e) => e.stopPropagation()}
+        >
         {/* Header */}
         <div className="bg-gray-50 px-6 py-4 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
           <div>
@@ -173,9 +165,9 @@ export const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({
         </div>
 
         {/* Image Container */}
-        <div className="flex-1 flex items-center justify-center bg-gray-100 relative min-h-0">
+        <div className="flex-1 flex items-center justify-center bg-gray-100 relative min-h-0 overflow-hidden">
           {currentImage.url && !imageError ? (
-            <div className="relative max-w-full max-h-full flex items-center justify-center">
+            <div className="relative w-full h-full flex items-center justify-center p-4">
               {imageLoading && (
                 <div className="absolute inset-0 flex items-center justify-center">
                   <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
@@ -189,7 +181,6 @@ export const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({
                 className={`max-w-full max-h-full object-contain transition-opacity duration-200 ${
                   imageLoading ? 'opacity-0' : 'opacity-100'
                 }`}
-                style={{ maxHeight: 'calc(90vh - 200px)' }}
               />
             </div>
           ) : (
@@ -289,7 +280,8 @@ export const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({
               {images.map((_, index) => (
                 <button
                   key={index}
-                  onClick={() => {
+                  onClick={(e) => {
+                    e.stopPropagation();
                     setCurrentIndex(index);
                     setImageLoading(true);
                     setImageError(false);
@@ -305,7 +297,8 @@ export const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({
             </div>
           </div>
         )}
+        </div>
       </div>
-    </div>
+    </Portal>
   );
 };

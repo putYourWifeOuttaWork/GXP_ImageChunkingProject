@@ -61,6 +61,11 @@ export const TableVisualization: React.FC<TableVisualizationProps> = ({
     return cols;
   }, [data.data]);
 
+  // Helper function to get nested value
+  const getNestedValue = (obj: any, path: string) => {
+    return path.split('.').reduce((current, key) => current?.[key], obj);
+  };
+
   // Sort and filter data
   const processedData = useMemo(() => {
     if (!data.data) return [];
@@ -102,11 +107,6 @@ export const TableVisualization: React.FC<TableVisualizationProps> = ({
   const totalPages = Math.ceil(processedData.length / pageSize);
   const startIndex = (currentPage - 1) * pageSize;
   const paginatedData = processedData.slice(startIndex, startIndex + pageSize);
-
-  // Helper function to get nested value
-  const getNestedValue = (obj: any, path: string) => {
-    return path.split('.').reduce((current, key) => current?.[key], obj);
-  };
 
   // Handle sorting
   const handleSort = (column: string) => {

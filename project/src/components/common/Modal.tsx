@@ -1,5 +1,6 @@
 import { ReactNode, useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
+import { Portal } from './Portal';
 
 interface ModalProps {
   isOpen: boolean;
@@ -35,27 +36,13 @@ const Modal = ({
     };
   }, [isOpen]);
   
-  // Handle clicking outside to close
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (modalRef.current && !modalRef.current.contains(event.target as Node)) {
-       // Only close if the click is directly on the modal backdrop (the fixed inset-0 div)
-       // This checks if the clicked element has the modal backdrop class
-       const target = event.target as HTMLElement;
-       if (target.classList.contains('modal-backdrop')) {
-         onClose();
-       }
-      }
-    };
-    
-    if (isOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
+  // Handle click on backdrop only
+  const handleBackdropClick = (event: React.MouseEvent) => {
+    // Only close if clicking directly on the backdrop
+    if (event.target === event.currentTarget) {
+      onClose();
     }
-    
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [isOpen, onClose]);
+  };
 
   if (!isOpen) return null;
 
@@ -71,11 +58,17 @@ const Modal = ({
   };
 
   return (
-   <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 animate-fade-in modal-backdrop" data-testid={testId}>
+    <Portal>
       <div 
-        ref={modalRef}
-        className={`bg-white rounded-lg shadow-lg w-full ${maxWidthClasses[maxWidth]} max-h-[90vh] overflow-y-auto`}
+        className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-[9999] animate-fade-in" 
+        data-testid={testId}
+        onClick={handleBackdropClick}
       >
+        <div 
+          ref={modalRef}
+          className={`bg-white rounded-lg shadow-lg w-full ${maxWidthClasses[maxWidth]} max-h-[90vh] overflow-y-auto`}
+          onClick={(e) => e.stopPropagation()}
+        >
         {title && (
           <div className="flex justify-between items-center p-4 border-b sticky top-0 bg-white z-10">
             {typeof title === 'string' ? <h2 className="text-xl font-semibold">{title}</h2> : title}
@@ -91,8 +84,9 @@ const Modal = ({
           </div>
         )}
         {children}
+        </div>
       </div>
-    </div>
+    </Portal>
   );
 };
 

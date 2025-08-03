@@ -19,6 +19,15 @@ export interface VisualizationSettings {
   animations: AnimationConfiguration;
   interactions: InteractionConfiguration;
   specific: Record<string, any>; // Chart-specific settings
+  viewport?: ViewportConfiguration; // Pan and zoom settings
+}
+
+// Viewport configuration for pan/zoom state
+export interface ViewportConfiguration {
+  scale: number;
+  panX: number; // Percentage of container width
+  panY: number; // Percentage of container height
+  autoFit?: boolean;
 }
 
 // Color configuration

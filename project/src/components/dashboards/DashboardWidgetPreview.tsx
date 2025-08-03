@@ -8,6 +8,8 @@ import LoadingScreen from '../common/LoadingScreen';
 import { supabase } from '../../lib/supabaseClient';
 import { RichTextWidget } from './widgets/RichTextWidget';
 import { DataMetricWidget } from './widgets/DataMetricWidget';
+import { ChartSettingsModal } from './ChartSettingsModal';
+import { ViewportConfiguration } from '../../types/reporting/visualizationTypes';
 import { 
   Settings, 
   Filter, 
@@ -18,6 +20,9 @@ import {
   ExternalLink 
 } from 'lucide-react';
 import Button from '../common/Button';
+import { WidgetSkeleton } from './WidgetSkeleton';
+import { ErrorDisplay, commonErrorActions, getErrorType } from '../common/ErrorDisplay';
+import { FacilityAnalyticsWidget } from './widgets/FacilityAnalyticsWidget';
 
 // Deep merge helper function
 function deepMerge(target: any, source: any): any {
@@ -48,6 +53,7 @@ interface DashboardWidgetPreviewProps {
   onConfigureClick: () => void;
   onRemove: () => void;
   isEditMode: boolean;
+  onWidgetUpdate?: (widget: DashboardWidget) => void;
 }
 
 export const DashboardWidgetPreview: React.FC<DashboardWidgetPreviewProps> = ({
@@ -55,18 +61,28 @@ export const DashboardWidgetPreview: React.FC<DashboardWidgetPreviewProps> = ({
   isSelected,
   onConfigureClick,
   onRemove,
-  isEditMode
+  isEditMode,
+  onWidgetUpdate
 }) => {
   const [data, setData] = useState<AggregatedData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reportConfig, setReportConfig] = useState<any>(null);
+  const [settingsModal, setSettingsModal] = useState<{
+    isOpen: boolean;
+    currentViewport?: ViewportConfiguration;
+  }>({
+    isOpen: false
+  });
 
   useEffect(() => {
     if (widget.type === 'report' && widget.reportId) {
       loadWidgetData();
+    } else if (widget.type === 'image' && widget.configuration?.imageConfiguration?.src) {
+      // Set loading state for images
+      setLoading(true);
     }
-  }, [widget.reportId, widget.configuration?.reportConfiguration?.isolationFilters]);
+  }, [widget.reportId, widget.configuration?.reportConfiguration?.isolationFilters, widget.configuration?.imageConfiguration?.src]);
 
   const loadWidgetData = async () => {
     if (!widget.reportId) return;
@@ -130,10 +146,55 @@ export const DashboardWidgetPreview: React.FC<DashboardWidgetPreviewProps> = ({
     }
   };
 
+  const handleSettingsChange = (changes: any) => {
+    // Update widget configuration with new settings
+    const updatedWidget = {
+      ...widget,
+      configuration: {
+        ...widget.configuration,
+        reportConfiguration: {
+          ...widget.configuration?.reportConfiguration,
+          chartSettingsOverrides: {
+            ...widget.configuration?.reportConfiguration?.chartSettingsOverrides,
+            visualizationSettings: {
+              ...widget.configuration?.reportConfiguration?.chartSettingsOverrides?.visualizationSettings,
+              ...changes
+            }
+          }
+        }
+      }
+    };
+    
+    onWidgetUpdate?.(updatedWidget);
+  };
+
+  const handleViewportSave = (viewport: ViewportConfiguration) => {
+    // Update widget configuration with new viewport
+    // When user explicitly saves a viewport, set autoFit to false
+    const updatedWidget = {
+      ...widget,
+      configuration: {
+        ...widget.configuration,
+        viewport: {
+          ...viewport,
+          autoFit: false // User has saved a custom view, don't auto-fit
+        }
+      }
+    };
+    
+    onWidgetUpdate?.(updatedWidget);
+  };
+
   const renderContent = () => {
     // Handle text widget
     if (widget.type === 'text') {
       const textConfig = widget.configuration?.textConfiguration || {};
+      
+      // Show skeleton briefly for text widgets on initial load
+      if (loading && !textConfig.content) {
+        return <WidgetSkeleton type="text" showTitle={false} />;
+      }
+      
       return (
         <RichTextWidget
           content={textConfig.content || ''}
@@ -146,6 +207,12 @@ export const DashboardWidgetPreview: React.FC<DashboardWidgetPreviewProps> = ({
     // Handle metric widget
     if (widget.type === 'metric') {
       const metricConfig = widget.configuration?.metricConfiguration || {};
+      
+      // Show skeleton while loading initial data for metric widget
+      if (!metricConfig.reportId || loading) {
+        return <WidgetSkeleton type="metric" showTitle={false} />;
+      }
+      
       return (
         <DataMetricWidget
           reportId={metricConfig.reportId}
@@ -158,6 +225,54 @@ export const DashboardWidgetPreview: React.FC<DashboardWidgetPreviewProps> = ({
           comparisonType={metricConfig.comparisonType}
           filters={[]}
         />
+      );
+    }
+
+    // Handle facility widget
+    if (widget.type === 'facility') {
+      const facilityConfig = widget.configuration?.facilityConfiguration || {};
+      
+      return (
+        <FacilityAnalyticsWidget
+          siteId={facilityConfig.siteId}
+          showDatePicker={facilityConfig.showDatePicker}
+          showSiteSelector={facilityConfig.showSiteSelector}
+          height={300}
+          onMetricClick={(metric, value) => {
+            console.log('Facility metric clicked:', metric, value);
+          }}
+        />
+      );
+    }
+
+    // Handle image widget
+    if (widget.type === 'image') {
+      const imageConfig = widget.configuration?.imageConfiguration || {};
+      
+      // Show skeleton while image is loading
+      if (loading && imageConfig.src) {
+        return <WidgetSkeleton type="image" showTitle={false} />;
+      }
+      
+      return (
+        <div className="flex items-center justify-center h-full p-4">
+          {imageConfig.src ? (
+            <img
+              src={imageConfig.src}
+              alt={imageConfig.alt || ''}
+              className="max-w-full max-h-full"
+              style={{
+                objectFit: imageConfig.fit || 'contain'
+              }}
+              onLoad={() => setLoading(false)}
+            />
+          ) : (
+            <div className="text-center text-gray-500">
+              <p className="text-sm">No image selected</p>
+              <p className="text-xs mt-1">Click settings to add an image</p>
+            </div>
+          )}
+        </div>
       );
     }
 
@@ -174,34 +289,38 @@ export const DashboardWidgetPreview: React.FC<DashboardWidgetPreviewProps> = ({
     }
 
     if (loading) {
-      return (
-        <div className="flex items-center justify-center h-full">
-          <LoadingScreen />
-        </div>
-      );
+      return <WidgetSkeleton type="report" showTitle={false} />;
     }
 
     if (error) {
       return (
-        <div className="flex items-center justify-center h-full text-red-600">
-          <div className="text-center">
-            <p className="font-medium">Error loading data</p>
-            <p className="text-sm mt-1">{error}</p>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={loadWidgetData}
-              className="mt-2"
-            >
-              Try again
-            </Button>
-          </div>
-        </div>
+        <ErrorDisplay
+          type={getErrorType(error)}
+          message={error}
+          actions={[
+            commonErrorActions.retry(loadWidgetData),
+            {
+              label: 'Configure Widget',
+              icon: <Settings size={16} />,
+              onClick: onConfigureClick,
+              variant: 'secondary'
+            }
+          ]}
+        />
       );
     }
 
     if (!data || !reportConfig) {
-      return <div className="text-gray-500 text-center">No data available</div>;
+      return (
+        <ErrorDisplay
+          type="data-not-found"
+          message="No data available for this widget"
+          actions={[
+            commonErrorActions.retry(loadWidgetData),
+            commonErrorActions.configure(onConfigureClick)
+          ]}
+        />
+      );
     }
 
     // Apply widget-level chart overrides with deep merge
@@ -224,9 +343,35 @@ export const DashboardWidgetPreview: React.FC<DashboardWidgetPreviewProps> = ({
     return (
       <BaseChart
         data={data}
-        settings={visualizationSettings}
+        settings={{
+          ...visualizationSettings,
+          // Use saved viewport if available, otherwise default with autoFit
+          viewport: widget.configuration?.viewport || {
+            scale: 1.0,
+            panX: 0,
+            panY: 0,
+            autoFit: true // Only auto-fit if no saved viewport
+          }
+        }}
         chartType={chartType}
         className="h-full"
+        onContextMenu={isEditMode ? (e) => {
+          e.preventDefault();
+          setSettingsModal({
+            isOpen: true,
+            currentViewport: widget.configuration?.viewport
+          });
+        } : undefined}
+        onViewportChange={(viewport) => {
+          // Update current viewport in modal if open
+          if (settingsModal.isOpen) {
+            setSettingsModal(prev => ({
+              ...prev,
+              currentViewport: viewport
+            }));
+          }
+        }}
+        onSettingsChange={handleSettingsChange}
       />
     );
   };
@@ -296,6 +441,22 @@ export const DashboardWidgetPreview: React.FC<DashboardWidgetPreviewProps> = ({
       {/* Selection Indicator */}
       {isEditMode && isSelected && (
         <div className="absolute inset-0 pointer-events-none border-2 border-primary-500 rounded-lg" />
+      )}
+      
+      {/* Chart Settings Modal */}
+      {widget.type === 'report' && data && (
+        <ChartSettingsModal
+          isOpen={settingsModal.isOpen}
+          onClose={() => setSettingsModal({ isOpen: false })}
+          visualizationSettings={
+            widget.configuration?.reportConfiguration?.chartSettingsOverrides?.visualizationSettings ||
+            reportConfig?.visualizationSettings ||
+            {}
+          }
+          currentViewport={settingsModal.currentViewport}
+          onSettingsChange={handleSettingsChange}
+          onViewportSave={handleViewportSave}
+        />
       )}
     </div>
   );

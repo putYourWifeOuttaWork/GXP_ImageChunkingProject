@@ -18,11 +18,19 @@ import Button from '../common/Button';
 import LoadingScreen from '../common/LoadingScreen';
 import { formatDistanceToNow } from 'date-fns';
 import { supabase } from '../../lib/supabaseClient';
+import { ChartSettingsModal } from './ChartSettingsModal';
+import { ViewportConfiguration } from '../../types/reporting/visualizationTypes';
+import { DashboardService } from '../../services/dashboardService';
+import { DataMetricWidget } from './widgets/DataMetricWidget';
+import { WidgetSkeleton } from './WidgetSkeleton';
+import { ErrorDisplay, commonErrorActions, getErrorType } from '../common/ErrorDisplay';
+import { FacilityAnalyticsWidget } from './widgets/FacilityAnalyticsWidget';
 
 interface DashboardViewerProps {
   dashboard: Dashboard;
   widgets: DashboardWidget[];
   isEmbedded?: boolean;
+  isEditMode?: boolean;
   onRefresh?: () => void;
 }
 
@@ -39,6 +47,7 @@ export const DashboardViewer: React.FC<DashboardViewerProps> = ({
   dashboard,
   widgets,
   isEmbedded = false,
+  isEditMode = false,
   onRefresh
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -51,6 +60,18 @@ export const DashboardViewer: React.FC<DashboardViewerProps> = ({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  
+  // Chart settings modal state
+  const [settingsModal, setSettingsModal] = useState<{
+    isOpen: boolean;
+    widgetId: string | null;
+    widget: DashboardWidget | null;
+    currentViewport?: ViewportConfiguration;
+  }>({
+    isOpen: false,
+    widgetId: null,
+    widget: null
+  });
 
   // Load widget data
   useEffect(() => {
@@ -85,10 +106,11 @@ export const DashboardViewer: React.FC<DashboardViewerProps> = ({
     }));
 
     try {
-      // Get report configuration from Supabase
+      // Get report configuration from Supabase with cache bypass
+      const timestamp = new Date().getTime();
       const { data: reportData, error: reportError } = await supabase
         .from('saved_reports')
-        .select('*')
+        .select(`*, updated_at`)
         .eq('report_id', widget.reportId)
         .single();
       
@@ -98,6 +120,14 @@ export const DashboardViewer: React.FC<DashboardViewerProps> = ({
       const report = {
         configuration: reportData.report_config
       };
+      
+      console.log('Loaded report configuration for widget:', {
+        widgetId: widget.id,
+        reportId: widget.reportId,
+        reportName: reportData.report_name,
+        visualizationSettings: report.configuration?.visualizationSettings,
+        colorPalette: report.configuration?.visualizationSettings?.colors?.palette
+      });
 
       // Apply global filters and widget overrides
       const filters = [
@@ -182,6 +212,18 @@ export const DashboardViewer: React.FC<DashboardViewerProps> = ({
   };
 
   const handleRefreshWidget = async (widget: DashboardWidget) => {
+    // Clear existing data to force a fresh load
+    setWidgetData(prev => ({
+      ...prev,
+      [widget.id]: {
+        ...prev[widget.id],
+        data: null,
+        loading: true,
+        error: null
+      }
+    }));
+    
+    // Reload the widget data
     await loadWidgetData(widget);
   };
 
@@ -193,6 +235,60 @@ export const DashboardViewer: React.FC<DashboardViewerProps> = ({
       document.exitFullscreen();
       setIsFullscreen(false);
     }
+  };
+
+  const handleWidgetSettingsChange = async (widgetId: string, changes: any) => {
+    // Find the widget
+    const widget = widgets.find(w => w.id === widgetId);
+    if (!widget) return;
+
+    // Update the widget configuration locally
+    const updatedWidget = {
+      ...widget,
+      configuration: {
+        ...widget.configuration,
+        reportConfiguration: {
+          ...widget.configuration?.reportConfiguration,
+          chartSettingsOverrides: {
+            ...widget.configuration?.reportConfiguration?.chartSettingsOverrides,
+            visualizationSettings: {
+              ...widget.configuration?.reportConfiguration?.chartSettingsOverrides?.visualizationSettings,
+              ...changes
+            }
+          }
+        }
+      }
+    };
+
+    // Update in database
+    await DashboardService.updateWidget(widgetId, updatedWidget);
+    
+    // Reload the widget data to apply changes
+    if (widget.type === 'report' && widget.reportId) {
+      loadWidgetData(widget);
+    }
+  };
+
+  const handleViewportSave = async (widgetId: string, viewport: ViewportConfiguration) => {
+    // Find the widget
+    const widget = widgets.find(w => w.id === widgetId);
+    if (!widget) return;
+
+    // Update the widget configuration with the viewport
+    // When user explicitly saves a viewport, set autoFit to false
+    const updatedWidget = {
+      ...widget,
+      configuration: {
+        ...widget.configuration,
+        viewport: {
+          ...viewport,
+          autoFit: false // User has saved a custom view, don't auto-fit
+        }
+      }
+    };
+
+    // Update in database
+    await DashboardService.updateWidget(widgetId, updatedWidget);
   };
 
   const renderWidget = (widget: DashboardWidget) => {
@@ -248,7 +344,7 @@ export const DashboardViewer: React.FC<DashboardViewerProps> = ({
           </div>
         )}
         
-        <div className={`${widget.showTitle ? 'h-[calc(100%-3rem)]' : 'h-full'} p-4`}>
+        <div className={`${widget.showTitle ? 'h-[calc(100%-3rem)]' : 'h-full'} p-4 overflow-auto`}>
           {renderWidgetContent(widget)}
         </div>
       </div>
@@ -256,6 +352,23 @@ export const DashboardViewer: React.FC<DashboardViewerProps> = ({
   };
 
   const renderWidgetContent = (widget: DashboardWidget) => {
+    // Calculate widget dimensions for chart sizing
+    const cellSize = 80;
+    const gap = 16;
+    const padding = 16; // Account for widget padding
+    const titleHeight = 48; // Account for title bar if shown
+    
+    const widgetWidth = widget.position.width * cellSize + (widget.position.width - 1) * gap;
+    const widgetHeight = widget.position.height * cellSize + (widget.position.height - 1) * gap;
+    
+    // Calculate inner dimensions for chart content
+    const containerWidth = widgetWidth - (padding * 2);
+    const containerHeight = widgetHeight - (widget.showTitle ? titleHeight + padding : padding * 2);
+    
+    // Get saved chart dimensions or use container dimensions
+    const savedDimensions = widget.configuration?.reportConfiguration?.chartSettingsOverrides?.visualizationSettings?.dimensions;
+    const chartWidth = savedDimensions?.width || containerWidth;
+    const chartHeight = savedDimensions?.height || containerHeight;
     switch (widget.type) {
       case 'report':
         if (!widget.reportId) {
@@ -265,32 +378,43 @@ export const DashboardViewer: React.FC<DashboardViewerProps> = ({
         const widgetState = widgetData[widget.id];
         
         if (!widgetState || widgetState.loading) {
-          return (
-            <div className="flex items-center justify-center h-full">
-              <LoadingScreen />
-            </div>
-          );
+          return <WidgetSkeleton type="report" showTitle={false} />;
         }
 
         if (widgetState.error) {
           return (
-            <div className="flex items-center justify-center h-full text-red-600">
-              <div className="text-center">
-                <p className="font-medium">Error loading data</p>
-                <p className="text-sm mt-1">{widgetState.error}</p>
-                <button
-                  onClick={() => handleRefreshWidget(widget)}
-                  className="mt-4 text-primary-600 hover:text-primary-700 text-sm font-medium"
-                >
-                  Try again
-                </button>
-              </div>
-            </div>
+            <ErrorDisplay
+              type={getErrorType(widgetState.error)}
+              message={widgetState.error}
+              actions={[
+                commonErrorActions.retry(() => handleRefreshWidget(widget)),
+                {
+                  label: 'Edit Report',
+                  icon: <Settings size={16} />,
+                  onClick: () => window.open(`/reports/builder?edit=${widget.reportId}`, '_blank'),
+                  variant: 'secondary'
+                }
+              ]}
+            />
           );
         }
 
         if (!widgetState.data) {
-          return <div className="text-gray-500">No data available</div>;
+          return (
+            <ErrorDisplay
+              type="data-not-found"
+              message="No data returned from this report"
+              actions={[
+                commonErrorActions.retry(() => handleRefreshWidget(widget)),
+                {
+                  label: 'Check Report Filters',
+                  icon: <Filter size={16} />,
+                  onClick: () => window.open(`/reports/builder?edit=${widget.reportId}`, '_blank'),
+                  variant: 'secondary'
+                }
+              ]}
+            />
+          );
         }
 
         // Get the report configuration from widget data
@@ -302,12 +426,16 @@ export const DashboardViewer: React.FC<DashboardViewerProps> = ({
             metadata: widgetState.data?.metadata
           });
           return (
-            <div className="flex items-center justify-center h-full text-gray-500">
-              <div className="text-center">
-                <p className="font-medium">Unable to load visualization</p>
-                <p className="text-sm mt-1">Report configuration is missing</p>
-              </div>
-            </div>
+            <ErrorDisplay
+              type="configuration-error"
+              title="Report Configuration Missing"
+              message="The report configuration could not be loaded"
+              details={`Report ID: ${widget.reportId}`}
+              actions={[
+                commonErrorActions.retry(() => handleRefreshWidget(widget)),
+                commonErrorActions.configure(() => window.open(`/reports/builder?edit=${widget.reportId}`, '_blank'))
+              ]}
+            />
           );
         }
         
@@ -321,9 +449,20 @@ export const DashboardViewer: React.FC<DashboardViewerProps> = ({
         
         console.log('Rendering widget:', {
           widgetId: widget.id,
+          widgetTitle: widget.title,
           chartType,
+          reportVisualizationSettings: reportConfig.visualizationSettings,
+          widgetOverrides: widgetChartOverrides?.visualizationSettings,
+          finalVisualizationSettings: visualizationSettings,
           hasData: !!widgetState.data?.data,
-          dataLength: widgetState.data?.data?.length
+          dataLength: widgetState.data?.data?.length,
+          widgetDimensions: {
+            widgetWidth,
+            widgetHeight,
+            chartWidth,
+            chartHeight,
+            gridPosition: widget.position
+          }
         });
 
         // Render table or chart based on type
@@ -337,20 +476,77 @@ export const DashboardViewer: React.FC<DashboardViewerProps> = ({
           );
         }
 
+        // Get saved dimensions or use container dimensions as defaults
+        const savedChartDimensions = widget.configuration?.reportConfiguration?.chartSettingsOverrides?.visualizationSettings?.dimensions;
+        const finalDimensions = {
+          width: savedChartDimensions?.width || containerWidth,
+          height: savedChartDimensions?.height || containerHeight,
+          margin: savedChartDimensions?.margin || {
+            top: 30,
+            right: 60,
+            bottom: 40,
+            left: 50
+          }
+        };
+        
+        // Debug viewport configuration
+        console.log('Widget viewport configuration:', {
+          widgetId: widget.id,
+          widgetTitle: widget.title,
+          hasConfiguration: !!widget.configuration,
+          hasViewport: !!widget.configuration?.viewport,
+          viewport: widget.configuration?.viewport,
+          savedDimensions: savedChartDimensions
+        });
+
         return (
-          <BaseChart
-            data={widgetState.data}
-            settings={visualizationSettings}
-            chartType={chartType}
-            className="h-full"
+          <div className="w-full h-full overflow-auto">
+            <BaseChart
+              data={widgetState.data}
+              settings={{
+                ...visualizationSettings,
+                // Override dimensions with final calculated dimensions
+                dimensions: finalDimensions,
+                // Use saved viewport if available, otherwise default with autoFit
+                viewport: widget.configuration?.viewport || {
+                  scale: 1.0,
+                  panX: 0,
+                  panY: 0,
+                  autoFit: true // Only auto-fit if no saved viewport
+                }
+              }}
+              chartType={chartType}
+              className="dashboard-widget-chart"
+            onContextMenu={isEditMode ? (e) => {
+              setSettingsModal({
+                isOpen: true,
+                widgetId: widget.id,
+                widget: widget,
+                currentViewport: widget.configuration?.viewport
+              });
+            } : undefined}
+            onViewportChange={(viewport) => {
+              // Update the current viewport in the modal if it's open
+              if (settingsModal.widgetId === widget.id) {
+                setSettingsModal(prev => ({
+                  ...prev,
+                  currentViewport: viewport
+                }));
+              }
+            }}
+            onSettingsChange={(changes) => {
+              // Handle settings changes from the modal
+              handleWidgetSettingsChange(widget.id, changes);
+            }}
           />
+          </div>
         );
 
       case 'text':
         const textConfig = widget.configuration?.textConfiguration;
         return (
           <div
-            className="prose max-w-none h-full overflow-auto p-4"
+            className="h-full overflow-auto p-4"
             style={{
               fontSize: textConfig?.fontSize || 14,
               fontFamily: textConfig?.fontFamily || 'inherit',
@@ -358,71 +554,44 @@ export const DashboardViewer: React.FC<DashboardViewerProps> = ({
               textAlign: textConfig?.alignment || 'left'
             }}
           >
-            {textConfig?.markdown ? (
-              <div dangerouslySetInnerHTML={{ __html: textConfig.content || '' }} />
-            ) : (
-              <p className="whitespace-pre-wrap">{textConfig?.content || ''}</p>
-            )}
+            {/* Always render as HTML since RichTextWidget saves HTML */}
+            <div 
+              className="rich-text-widget-content"
+              dangerouslySetInnerHTML={{ __html: textConfig?.content || '' }} 
+            />
           </div>
         );
 
       case 'metric':
-        const metricConfig = widget.configuration?.metricConfiguration;
-        const formatMetricValue = (val: number | string): string => {
-          if (typeof val === 'string') return val;
-          
-          if (metricConfig?.format === 'currency') {
-            return new Intl.NumberFormat('en-US', {
-              style: 'currency',
-              currency: 'USD',
-              minimumFractionDigits: 0,
-              maximumFractionDigits: 0
-            }).format(val);
-          }
-          
-          if (metricConfig?.format === 'percentage') {
-            return `${val}%`;
-          }
-          
-          if (metricConfig?.format === 'number') {
-            return new Intl.NumberFormat('en-US').format(val);
-          }
-          
-          return val.toString();
-        };
-
+        const metricConfig = widget.configuration?.metricConfiguration || {};
         return (
-          <div className="flex items-center justify-center h-full p-4">
-            <div className="text-center">
-              <div 
-                className="text-5xl font-bold mb-2"
-                style={{ color: metricConfig?.color || '#3B82F6' }}
-              >
-                {formatMetricValue(metricConfig?.value || 0)}
-              </div>
-              <div className="text-lg text-gray-600">
-                {metricConfig?.label || 'Metric'}
-              </div>
-              {metricConfig?.trend && (
-                <div className="flex items-center justify-center mt-4">
-                  <span className={`text-lg font-medium ${
-                    metricConfig.trend.direction === 'up' ? 'text-green-600' : 
-                    metricConfig.trend.direction === 'down' ? 'text-red-600' : 
-                    'text-gray-600'
-                  }`}>
-                    {metricConfig.trend.direction === 'up' ? '↑' : 
-                     metricConfig.trend.direction === 'down' ? '↓' : '→'} 
-                    {metricConfig.trend.percentage > 0 ? '+' : ''}{metricConfig.trend.percentage}%
-                  </span>
-                </div>
-              )}
-              {metricConfig?.comparison && (
-                <div className="mt-2 text-sm text-gray-500">
-                  vs. {metricConfig.comparison.label}: {formatMetricValue(metricConfig.comparison.value)}
-                </div>
-              )}
-            </div>
-          </div>
+          <DataMetricWidget
+            reportId={metricConfig.reportId}
+            metricField={metricConfig.metricField}
+            aggregation={metricConfig.aggregation}
+            label={metricConfig.label}
+            format={metricConfig.format}
+            color={metricConfig.color}
+            comparisonReportId={metricConfig.comparisonReportId}
+            comparisonType={metricConfig.comparisonType}
+            filters={globalFilters}
+          />
+        );
+
+      case 'facility':
+        const facilityConfig = widget.configuration?.facilityConfiguration || {};
+        // Calculate height based on widget position
+        const facilityHeight = (widget.position.height * 80 + (widget.position.height - 1) * 16) - 100;
+        return (
+          <FacilityAnalyticsWidget
+            siteId={facilityConfig.siteId}
+            showDatePicker={facilityConfig.showDatePicker}
+            showSiteSelector={facilityConfig.showSiteSelector}
+            height={facilityHeight}
+            onMetricClick={(metric, value) => {
+              console.log('Facility metric clicked in dashboard:', metric, value);
+            }}
+          />
         );
 
       case 'image':
@@ -565,6 +734,30 @@ export const DashboardViewer: React.FC<DashboardViewerProps> = ({
           {widgets.map(renderWidget)}
         </div>
       </div>
+      
+      {/* Chart Settings Modal */}
+      {settingsModal.widget && settingsModal.widgetId && (
+        <ChartSettingsModal
+          isOpen={settingsModal.isOpen}
+          onClose={() => setSettingsModal({ isOpen: false, widgetId: null, widget: null })}
+          visualizationSettings={
+            settingsModal.widget.configuration?.reportConfiguration?.chartSettingsOverrides?.visualizationSettings ||
+            widgetData[settingsModal.widgetId]?.data?.metadata?.reportConfig?.visualizationSettings ||
+            {}
+          }
+          currentViewport={settingsModal.currentViewport}
+          onSettingsChange={(changes) => {
+            if (settingsModal.widgetId) {
+              handleWidgetSettingsChange(settingsModal.widgetId, changes);
+            }
+          }}
+          onViewportSave={(viewport) => {
+            if (settingsModal.widgetId) {
+              handleViewportSave(settingsModal.widgetId, viewport);
+            }
+          }}
+        />
+      )}
     </div>
   );
 };
